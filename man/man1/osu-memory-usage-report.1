@@ -1,0 +1,116 @@
+.\" Man page for osu-memory-usage-report.sh
+.\" Written in classic troff/groff format
+.TH OSU-MEMORY-USAGE-REPORT 1 "2026-03-26" "osu-memory-usage-report 0.2" "User Commands"
+.SH NAME
+osu-memory-usage-report \- OpenStack resource summary per domain with per-project breakdown
+.SH SYNOPSIS
+.B osu-memory-usage-report.sh
+.RB [ \-h | \-\-help ]
+.RB [ \-v | \-\-version ]
+.I domain_name
+.SH DESCRIPTION
+.B osu-memory-usage-report.sh
+provides an accurate summary of OpenStack resources for a given domain,
+with a per-project breakdown. It queries the OpenStack API to collect
+instance, compute, and volume data for every project in the specified
+domain.
+.PP
+The report includes per-project:
+.IP \(bu 3
+Instance count
+.IP \(bu
+vCPU allocation
+.IP \(bu
+RAM allocation (MiB)
+.IP \(bu
+Volume count
+.IP \(bu
+Total volume size (GiB)
+.PP
+Domain-wide totals are displayed at the bottom of the report.
+.PP
+Progress messages are sent to standard error so that standard output
+remains clean for piping or redirection.
+.SH OPTIONS
+.TP
+.BR \-v ", " \-\-version
+Display version information and exit.
+.TP
+.BR \-h ", " \-\-help
+Display usage information and exit.
+.SH ARGUMENTS
+.TP
+.I domain_name
+Name of the OpenStack domain to summarize. This argument is required.
+If omitted, the help message is displayed.
+.SH OUTPUT COLUMNS
+.TP
+.B Project
+Name of the OpenStack project within the domain.
+.TP
+.B Instances
+Number of servers (instances) in the project.
+.TP
+.B vCPUs
+Total virtual CPUs allocated across all instances in the project.
+.TP
+.B RAM (MiB)
+Total RAM allocated across all instances in the project, in MiB.
+.TP
+.B Volumes
+Number of block storage volumes in the project.
+.TP
+.B Size (GiB)
+Total volume size in the project, in GiB.
+.PP
+A
+.B TOTAL
+row at the bottom aggregates all projects in the domain.
+.SH REQUIREMENTS
+The following commands must be available in
+.BR PATH :
+.PP
+.RS
+.BR openstack (1),
+.BR jq (1)
+.RE
+.PP
+An OpenStack credentials file must be sourced before running the script
+(e.g.,
+.IR openrc.sh ).
+The credentials should have admin or domain admin scope to list all
+projects and their resources.
+.SH EXIT STATUS
+.TP
+.B 0
+Successful execution.
+.TP
+.B 1
+Error: missing required commands, missing domain argument, or invalid
+options.
+.SH EXAMPLES
+Summarize resources for a specific domain:
+.PP
+.RS
+.B osu-memory-usage-report.sh my-domain
+.RE
+.PP
+Source credentials and run:
+.PP
+.RS
+.nf
+.B source ~/openrc.sh
+.B osu-memory-usage-report.sh production
+.fi
+.RE
+.PP
+Redirect output to a file (progress messages go to stderr):
+.PP
+.RS
+.B osu-memory-usage-report.sh my-domain > report.txt
+.RE
+.SH AUTHORS
+Ciro Iriarte <ciro.iriarte+software@gmail.com>
+.SH SEE ALSO
+.BR openstack (1),
+.BR jq (1)

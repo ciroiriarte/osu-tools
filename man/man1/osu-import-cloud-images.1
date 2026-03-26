@@ -1,0 +1,339 @@
+.\" Man page for osu-import-cloud-images.sh
+.\" Written in classic troff/groff format
+.TH OSU-IMPORT-CLOUD-IMAGES 1 "2026-03-26" "osu-import-cloud-images 1.2" "User Commands"
+.SH NAME
+osu-import-cloud-images \- import upstream cloud images into OpenStack Glance
+.SH SYNOPSIS
+.B osu-import-cloud-images.sh
+.RB [ \-h | \-\-help ]
+.RB [ \-v | \-\-version ]
+.RB [ \-i | \-\-interactive ]
+.RB [ \-b | \-\-batch ]
+.RB [ \-l | \-\-list ]
+.RB [ \-d | \-\-distro
+.IR NAME ]
+.RB [ \-f | \-\-format
+.IR FMT ]
+.RB [ \-\-visibility
+.IR VIS ]
+.RB [ \-\-os\-license
+.IR LIC ]
+.RB [ \-\-force ]
+.RB [ \-\-no\-customize ]
+.RB [ \-\-arch
+.IR ARCH ]
+.RB [ \-n | \-\-dry\-run ]
+.SH DESCRIPTION
+.B osu-import-cloud-images.sh
+discovers the latest upstream cloud images from distribution mirrors, downloads
+them, optionally customizes them (e.g. injecting qemu-guest-agent), converts
+them to the target disk format, and uploads them to OpenStack Glance with
+standardized metadata properties optimized for virtio, UEFI, and q35
+machine type.
+.PP
+Supported distributions (last two releases each, discovered dynamically):
+.IP \(bu 3
+Debian
+.IP \(bu
+Ubuntu LTS
+.IP \(bu
+Rocky Linux (plain and LVM variants)
+.IP \(bu
+openSUSE Leap
+.IP \(bu
+Oracle Linux
+.PP
+The default disk format is
+.B raw
+which is recommended for Ceph RBD backends to leverage copy-on-write cloning
+and avoid double conversion overhead that qcow2 incurs.
+.PP
+Workflow per image:
+.IP 1. 4
+Scan public mirrors for available versions
+.IP 2.
+Download cloud image (cached in /var/tmp/os-cloud-images/)
+.IP 3.
+Optionally customize via virt-customize (see
+.B IMAGE CUSTOMIZATIONS
+below)
+.IP 4.
+Convert to target disk format (raw or qcow2)
+.IP 5.
+Upload to Glance with standardized metadata properties
+.SH OPTIONS
+.TP
+.BR \-v ", " \-\-version
+Display version information and exit.
+.TP
+.BR \-h ", " \-\-help
+Display usage information and exit.
+.TP
+.BR \-i ", " \-\-interactive
+Select images interactively from the discovered catalog.
+This is the default when running on a TTY.
+.TP
+.BR \-b ", " \-\-batch
+Import all discovered images non-interactively.
+.TP
+.BR \-l ", " \-\-list
+List discovered images and exit without importing.
+.TP
+.BR \-d ", " \-\-distro " " \fINAME\fR
+Filter by distribution family. Supported values:
+.BR debian ", " ubuntu ", " rocky ", " opensuse ", " oracle .
+.TP
+.BR \-f ", " \-\-format " " \fIFMT\fR
+Target disk format for Glance:
+.B raw
+(default, recommended for Ceph RBD) or
+.BR qcow2 .
+.TP
+.BI \-\-visibility " VIS"
+Image visibility in Glance:
+.B public
+(default) or
+.BR private .
+Public images are visible to all projects; private images are only
+visible to the uploading project.
+.TP
+.BI \-\-os\-license " LIC"
+Override the
+.B os_license
+image property (default: "opensource"). Useful for images requiring
+license tracking (e.g. "rhel" for Red Hat Enterprise Linux).
+.TP
+.B \-\-force
+Replace existing images with the same name instead of skipping.
+.TP
+.B \-\-no\-customize
+Skip virt-customize steps (guest-agent injection, ptp_kvm, etc.).
+Useful when customization will be handled via cloud-init instead.
+.TP
+.BI \-\-arch " ARCH"
+Target architecture (default: x86_64). Currently only x86_64 is supported.
+.TP
+.BR \-n ", " \-\-dry\-run
+Show what would be done without making any changes.
+.SH IMAGE CUSTOMIZATIONS
+When
+.BR virt-customize (1)
+is available (and
+.B \-\-no\-customize
+is not used), the following per-distribution customizations are applied:
+.TP
+.B Debian, Ubuntu \(em guest-agent
+Installs the
+.B qemu-guest-agent
+package, which is not included in these cloud images by default.
+.TP
+.B openSUSE Leap \(em ptp-fix
+Injects
+.I /etc/modules-load.d/ptp_kvm.conf
+to load the
+.B ptp_kvm
+kernel module at boot for accurate time synchronization.
+.TP
+.B Rocky Linux LVM \(em lvm-pvresize
+Injects a cloud-init bootcmd
+.RI ( /etc/cloud/cloud.cfg.d/99-pvresize.cfg )
+that runs
+.B pvresize
+on all physical volumes at every boot. After a Cinder volume resize and
+reboot, the VG automatically gains free space. LV allocation
+.RB ( lvresize / lvcreate )
+is left to the user.
+.TP
+.B Rocky Linux (plain), Oracle Linux
+No customization needed; qemu-guest-agent is already included in these
+cloud images.
+.PP
+All customized images have
+.I /etc/machine-id
+truncated to zero length to avoid duplicate machine IDs when cloning.
+.SH GLANCE IMAGE PROPERTIES
+The following standardized properties are set on every imported image:
+.PP
+.TS
+tab(|);
+lb lb
+l l.
+Property|Value
+_
+os_type|linux
+hw_machine_type|q35
+hw_firmware_type|uefi
+hw_scsi_model|virtio-scsi
+hw_disk_bus|scsi
+hw_vif_model|virtio
+hw_vif_multiqueue_enabled|true
+hw_virtio_packed_ring|true
+hw_video_model|virtio
+hw_serial_port_count|1
+hw_qemu_guest_agent|true
+os_require_quiesce|true
+hw_require_fsfreeze|true
+.TE
+.PP
+Per-distribution properties are also set:
+.PP
+.TS
+tab(|);
+lb lb lb lb lb
+l l l l l.
+Distribution|os_distro|os_admin_user|has_auto_disk_config|os_license
+_
+Debian|debian|debian|true|opensource
+Ubuntu|ubuntu|ubuntu|true|opensource
+Rocky Linux|rocky|rocky|true|opensource
+Rocky Linux (LVM)|rocky|rocky|false|opensource
+openSUSE Leap|opensuse|opensuse|true|opensource
+Oracle Linux|oel|oracle|false|opensource
+.TE
+.PP
+The
+.B os_version
+property is initially set to the version discovered from the mirror
+(e.g. "24.04", "9.7", "15.6").
+When
+.BR virt-cat (1)
+is available, the precise version is probed from the downloaded image
+by reading
+.I /etc/debian_version
+(Debian) or
+.I /etc/os-release
+(all other distributions), yielding point releases such as "12.13"
+for Debian.
+.PP
+The
+.B os_license
+property defaults to "opensource" for all discovered distributions and can
+be overridden with the
+.B \-\-os\-license
+option (e.g. "rhel" for Red Hat Enterprise Linux images).
+.SH PROXY SUPPORT
+The script honours the standard
+.BR http_proxy ", " https_proxy " and " no_proxy
+environment variables (case-insensitive).
+When any of these are set, the proxy configuration is automatically forwarded
+to the guest package manager during image customization (guest-agent
+injection).
+.PP
+The
+.BR virt-customize (1)
+step runs inside a QEMU usermode (SLIRP) virtual machine.
+The appliance interface is brought up via the built-in SLIRP DHCP server,
+which works regardless of the host\(aqs LAN configuration.
+Once the SLIRP network is active, outbound traffic is NAT-ed through the
+host, so the proxy address is reachable from inside the guest.
+.PP
+Proxy environment variables are stripped from the
+.BR virt-customize (1)
+invocation itself to prevent them from leaking directly into the appliance
+kernel, where they would cause routing failures (the appliance cannot
+reach the host\(aqs proxy IP via its own network stack).
+.PP
+For Debian and Ubuntu images, proxy settings are written to
+.I /etc/apt/apt.conf.d/99proxy
+inside the guest, and
+.B no_proxy
+entries are translated to
+.B Acquire::http::Proxy::<host> \(dqDIRECT\(dq
+rules.
+All transient files (proxy config, DHCP-generated resolv.conf) are removed
+after package installation.
+.PP
+Example usage behind a proxy:
+.PP
+.RS
+.nf
+export http_proxy=http://proxy:3128
+export https_proxy=http://proxy:3128
+export no_proxy=localhost,127.0.0.1,.internal.lan
+osu-import-cloud-images.sh -b -d debian
+.fi
+.RE
+.SH REQUIREMENTS
+The following commands must be available in
+.BR PATH :
+.PP
+.RS
+.BR openstack (1)
+(python-openstackclient),
+.BR qemu-img (1),
+.BR jq (1),
+.BR curl (1)
+or
+.BR wget (1)
+.RE
+.PP
+Optional:
+.BR virt-customize (1)
+(from libguestfs-tools) for guest-agent injection and image customization.
+.PP
+An OpenStack credentials file must be sourced before running the script
+(e.g.,
+.IR openrc.sh ).
+The credentials should have admin scope for public image uploads.
+.SH EXIT STATUS
+.TP
+.B 0
+Successful execution.
+.TP
+.B 1
+Error: missing dependencies, invalid options, download failure, or
+Glance upload failure.
+.SH EXAMPLES
+List available images:
+.PP
+.RS
+.B osu-import-cloud-images.sh -l
+.RE
+.PP
+Import all images interactively:
+.PP
+.RS
+.B osu-import-cloud-images.sh -i
+.RE
+.PP
+Import all Debian images in batch mode:
+.PP
+.RS
+.B osu-import-cloud-images.sh -b -d debian
+.RE
+.PP
+Import as private images with qcow2 format:
+.PP
+.RS
+.B osu-import-cloud-images.sh -b --visibility private -f qcow2
+.RE
+.PP
+Dry run to preview what would be imported:
+.PP
+.RS
+.B osu-import-cloud-images.sh -n -b
+.RE
+.PP
+Import with license override:
+.PP
+.RS
+.B osu-import-cloud-images.sh -b --os-license rhel -d oracle
+.RE
+.PP
+Import Debian images behind a proxy:
+.PP
+.RS
+.nf
+export http_proxy=http://proxy:3128
+export https_proxy=http://proxy:3128
+export no_proxy=localhost,127.0.0.1,.internal.lan
+.B osu-import-cloud-images.sh -b -d debian
+.fi
+.RE
+.SH AUTHORS
+Ciro Iriarte <ciro.iriarte+software@gmail.com>
+.SH SEE ALSO
+.BR openstack (1),
+.BR qemu-img (1),
+.BR virt-customize (1),
+.BR jq (1)
