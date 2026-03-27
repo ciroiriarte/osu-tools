@@ -1,6 +1,6 @@
 .\" Man page for osu-retype-vdisk.sh
 .\" Written in classic troff/groff format
-.TH OSU-RETYPE-VDISK 1 "2026-03-27" "osu-retype-vdisk 0.1.1" "User Commands"
+.TH OSU-RETYPE-VDISK 1 "2026-03-27" "osu-retype-vdisk 0.1.4" "User Commands"
 .SH NAME
 osu-retype-vdisk \- retype (migrate) OpenStack volumes between Ceph pools
 .SH SYNOPSIS
@@ -83,6 +83,10 @@ Volume is in a valid state (\fBin-use\fR or \fBavailable\fR)
 Volume has no snapshots (snapshots block migration)
 .IP \(bu
 Target type exists and differs from the current type
+.IP \(bu
+For in-use volumes requiring cross-backend migration: the attached instance
+is not in \fBstopped\fR (SHUTOFF) state (Nova refuses volume swaps on
+stopped VMs)
 .SH MODES
 .TP
 .BR \-i ", " \-\-interactive
@@ -254,7 +258,8 @@ of
 .BR "openstack volume set \-\-help" .
 The detected flag is displayed during execution.
 .SH MIGRATION STATES
-During retype, the Cinder volume transitions through these states:
+During a cross-backend retype (data migration), the Cinder volume transitions
+through these states:
 .PP
 .TS
 tab(|);
@@ -272,6 +277,16 @@ On failure,
 changes to
 .BR error .
 The monitor mode tracks these fields and exits accordingly.
+.PP
+.B Same-backend retypes
+(where the source and target types map to the same storage backend) complete
+instantly.
+Cinder changes the type label without moving data, so
+.B migration_status
+remains
+.B none
+and no progress polling is needed.
+The monitor detects this condition and exits immediately.
 .SH REQUIREMENTS
 The following commands must be available in
 .BR PATH :
@@ -390,6 +405,19 @@ Monitor with a custom polling interval:
 .RE
 .SH CAVEATS
 .IP \(bu 3
+.B Stopped VMs block cross-backend retypes.
+When an in-use volume is attached to a SHUTOFF instance and the retype
+requires data migration between different storage backends (different
+.BR volume_backend_name ),
+Nova refuses the volume swap with HTTP\ 409
+.RI ( "Cannot 'swap_volume' while vm_state stopped" ).
+The pre-flight check detects this and fails early with an actionable
+message.
+Workarounds: start the instance before retyping, or detach the volume
+first.
+Same-backend retypes (type relabeling without data movement) are not
+affected and work regardless of VM state.
+.IP \(bu
 Volumes with existing snapshots cannot be retyped.
 Use
 .B \-\-handle\-snapshots

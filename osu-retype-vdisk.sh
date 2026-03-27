@@ -8,7 +8,7 @@
 #
 # Author: Ciro Iriarte <ciro.iriarte+software@gmail.com>
 # Created: 2026-03-27
-# Version: 0.1.1
+# Version: 0.1.4
 #
 # Requirements:
 #   - openstack CLI (python-openstackclient)
@@ -16,6 +16,17 @@
 #   - A sourced OpenStack credentials file (e.g., openrc.sh)
 #
 # Changelog:
+#   - 2026-03-27: v0.1.4 - Add pre-flight check for stopped VMs with cross-backend
+#                          retypes. Nova refuses swap_volume on stopped instances
+#                          (HTTP 409), so the script now detects this early and
+#                          advises starting the instance or detaching the volume.
+#   - 2026-03-27: v0.1.3 - Fix monitor infinite loop on instant same-backend
+#                          retype where Cinder changes type without migration
+#                          (migration_status stays none). Monitor now detects
+#                          target type match and declares success immediately.
+#   - 2026-03-27: v0.1.2 - Fix monitor infinite loop when Cinder fails retype
+#                          instantly (pre-retype migration_status now captured
+#                          before execute_retype to avoid race condition).
 #   - 2026-03-27: v0.1.1 - Fix monitor reacting to stale migration_status=error
 #                          from previous attempts. Add migration_status check
 #                          to pre-flight. Fix empty volume name display. Add
@@ -30,7 +41,7 @@
 set -euo pipefail
 
 # --- Configuration ---
-SCRIPT_VERSION="0.1.1"
+SCRIPT_VERSION="0.1.4"
 
 # Operational defaults
 MODE=""
@@ -54,6 +65,7 @@ RETYPE_SKIP=0
 
 # Caches
 declare -A SERVER_NAME_CACHE=()
+declare -A SERVER_STATE_CACHE=()
 VOLUME_TYPES_JSON=""
 
 # Resolved server state (populated by resolve_server)
@@ -175,6 +187,8 @@ Pre-flight checks (automatic):
   - Volume is in a valid state (in-use or available)
   - Volume has no snapshots (see --handle-snapshots)
   - Target type exists and differs from current type
+  - In-use volumes on stopped VMs cannot retype across backends
+    (Nova refuses swap_volume on SHUTOFF instances)
 
 Requirements:
   - openstack CLI (python-openstackclient) with valid credentials
@@ -315,6 +329,56 @@ resolve_volume_type() {
         return 1
     fi
     echo "$match"
+}
+
+# Check if retyping between two types requires cross-backend data migration.
+# Returns 0 (true) if backends differ, 1 (false) if same or indeterminate.
+requires_backend_migration() {
+    local from_type="$1" to_type="$2"
+
+    # Fetch extra specs (properties) for both types
+    local from_backend to_backend
+    from_backend=$(openstack volume type show "$from_type" -f json 2>/dev/null \
+        | jq -r '.properties.volume_backend_name // ""')
+    to_backend=$(openstack volume type show "$to_type" -f json 2>/dev/null \
+        | jq -r '.properties.volume_backend_name // ""')
+
+    # If either is empty (like __DEFAULT__), we can't be sure — assume possible
+    if [[ -z "$from_backend" || -z "$to_backend" ]]; then
+        return 0
+    fi
+
+    [[ "$from_backend" != "$to_backend" ]]
+}
+
+# Get the VM status for a volume's first attachment.
+# Prints the vm_state (active, stopped, etc.) or empty if not attached.
+get_attached_server_state() {
+    local vjson="$1"
+    local server_id
+    server_id=$(echo "$vjson" | jq -r '
+        if (.attachments | type) == "array" and (.attachments | length) > 0 then
+            .attachments[0].server_id
+        else
+            ""
+        end')
+
+    if [[ -z "$server_id" ]]; then
+        echo ""
+        return
+    fi
+
+    # Use cache if available
+    if [[ -n "${SERVER_STATE_CACHE[$server_id]:-}" ]]; then
+        echo "${SERVER_STATE_CACHE[$server_id]}"
+        return
+    fi
+
+    local sjson vm_state
+    sjson=$(openstack server show "$server_id" -f json 2>/dev/null || echo '{}')
+    vm_state=$(echo "$sjson" | jq -r '."OS-EXT-STS:vm_state" // .status // ""' | tr '[:upper:]' '[:lower:]')
+    SERVER_STATE_CACHE["$server_id"]="$vm_state"
+    echo "$vm_state"
 }
 
 fetch_volume_snapshots() {
@@ -546,6 +610,21 @@ preflight_retype() {
     if [[ "$vol_type" == "$target_type" ]]; then
         warn "Volume '${vol_name}' is already type '${vol_type}'. Skipping."
         return 2
+    fi
+
+    # Check for SHUTOFF VM with cross-backend retype (Nova cannot swap_volume
+    # on a stopped instance, so cross-pool retypes will always fail)
+    if [[ "$status" == "in-use" ]]; then
+        local vm_state
+        vm_state=$(get_attached_server_state "$vjson")
+        if [[ "$vm_state" == "stopped" ]] && requires_backend_migration "$vol_type" "$target_type"; then
+            local server_id
+            server_id=$(echo "$vjson" | jq -r '.attachments[0].server_id // "unknown"')
+            err "Volume '${vol_name}' is attached to a stopped instance (${server_id})."
+            err "Nova cannot swap volumes on stopped VMs. Start the instance first,"
+            err "or detach the volume before retyping across backends."
+            return 1
+        fi
     fi
 
     ok "Pre-flight passed: ${vol_name} (${vol_type} → ${target_type})"
@@ -811,7 +890,7 @@ select_backup_container_interactive() {
 # --- Monitoring ---------------------------------------------------------------
 
 monitor_volume() {
-    local vol_id="$1" vol_name="${2:-$1}"
+    local vol_id="$1" vol_name="${2:-$1}" pre_retype_mig="${3:-}" target_type="${4:-}"
     local start_time elapsed status migration_status vol_type
     local spin_chars='|/-\'
     local spin_idx=0
@@ -822,9 +901,14 @@ monitor_volume() {
     # Clean exit on Ctrl+C during monitoring
     trap 'printf "\n" >&2; warn "Interrupted. Migration may still be in progress."; trap - INT; return 130' INT
 
-    # Capture initial migration_status to detect stale state
+    # Use pre-retype migration_status if provided (avoids race with fast failures),
+    # otherwise capture current state (standalone -m mode).
     local initial_mig_status
-    initial_mig_status=$(echo "$(fetch_volume_detail "$vol_id")" | jq -r '.migration_status // "none"')
+    if [[ -n "$pre_retype_mig" ]]; then
+        initial_mig_status="$pre_retype_mig"
+    else
+        initial_mig_status=$(echo "$(fetch_volume_detail "$vol_id")" | jq -r '.migration_status // "none"')
+    fi
     local state_changed=0
 
     # Give Cinder time to accept the retype before first poll
@@ -856,6 +940,18 @@ monitor_volume() {
             printf "\r%-100s\r" "" >&2
             ok "Migration completed in ${el_str}"
             ok "Final: status=${status}  type=${vol_type}  migration=${migration_status}"
+            trap - INT
+            return 0
+        fi
+
+        # Detect instant retype: type already matches target, retype succeeded.
+        # Covers same-backend relabels where Cinder changes the type without
+        # data movement (migration_status stays none or remains stale).
+        if [[ -n "$target_type" && "$vol_type" == "$target_type" ]] \
+           && [[ "$status" == "in-use" || "$status" == "available" ]]; then
+            printf "\r%-100s\r" "" >&2
+            ok "Retype completed in ${el_str} (no migration needed)"
+            ok "Final: status=${status}  type=${vol_type}"
             trap - INT
             return 0
         fi
@@ -1114,11 +1210,12 @@ execute_retype_batch() {
     local total=${#vol_ids[@]}
     local current=0
 
-    local vid vol_json vol_name
+    local vid vol_json vol_name pre_mig_status
     for vid in "${vol_ids[@]}"; do
         (( current++ )) || true
         vol_json=$(fetch_volume_detail "$vid")
         vol_name=$(echo "$vol_json" | jq -r 'if (.name // "") == "" then .id else .name end')
+        pre_mig_status=$(echo "$vol_json" | jq -r '.migration_status // "none"')
 
         if (( total > 1 )); then
             echo "" >&2
@@ -1143,7 +1240,7 @@ execute_retype_batch() {
 
         if (( ! NO_MONITOR )); then
             local mon_rc=0
-            monitor_volume "$vid" "$vol_name" || mon_rc=$?
+            monitor_volume "$vid" "$vol_name" "$pre_mig_status" "$target_type" || mon_rc=$?
             if (( mon_rc == 0 )); then
                 (( RETYPE_OK++ )) || true
             else

@@ -28,7 +28,7 @@ A collection of Bash wrappers and tools to simplify OpenStack usage via the open
 |---|---|---|---|
 | `osu-import-cloud-images.sh` | ![v1.2.1](https://img.shields.io/badge/version-1.2.1-blue) | 2026-03-12 | 2026-03-27 |
 | `osu-memory-usage-report.sh` | ![v0.2](https://img.shields.io/badge/version-0.2-orange) | 2025-12-24 | 2026-03-26 |
-| `osu-retype-vdisk.sh` | ![v0.1.1](https://img.shields.io/badge/version-0.1.1-orange) | 2026-03-27 | 2026-03-27 |
+| `osu-retype-vdisk.sh` | ![v0.1.4](https://img.shields.io/badge/version-0.1.4-orange) | 2026-03-27 | 2026-03-27 |
 
 All scripts support `--version` / `-v` and `--help` / `-h` flags.
 
@@ -232,7 +232,7 @@ Provides an accurate summary of OpenStack resources per domain, with a per-proje
 
 ### 🔍 `osu-retype-vdisk.sh`
 
-Retypes (migrates) OpenStack Cinder volumes between Ceph pools by changing the volume type. Provides both an interactive wizard and a one-shot CLI mode with pre-flight validation (state checks, snapshot detection), interactive volume selection, and automated migration progress monitoring.
+Retypes (migrates) OpenStack Cinder volumes between Ceph pools by changing the volume type. Provides both an interactive wizard and a one-shot CLI mode with pre-flight validation (state checks, snapshot detection, stopped VM detection), interactive volume selection, and automated migration progress monitoring.
 
 - **Author:** Ciro Iriarte
 - **Created:** 2026-03-27
@@ -246,12 +246,18 @@ Retypes (migrates) OpenStack Cinder volumes between Ceph pools by changing the v
 - A sourced OpenStack credentials file (e.g., `openrc.sh`)
 - No admin privileges required for normal operations
 
+#### ⚠️ Known Limitations
+
+- **Stopped VMs block cross-backend retypes.** When a volume is attached to a SHUTOFF instance and the retype requires data migration between different storage backends (e.g. `slow` to `fast` pool), Nova refuses the volume swap (`Cannot 'swap_volume' while vm_state stopped`). The pre-flight check detects this and advises starting the instance or detaching the volume first. Same-backend retypes (type relabeling without data movement) work regardless of VM state.
+- **Snapshots block retype.** Volumes with snapshots cannot be retyped. Use `--handle-snapshots` to resolve this automatically.
+
 #### 💡 Recommendations
 
 - Source your OpenStack credentials before running:
   ```bash
   source ~/openrc.sh
   ```
+- **Ensure VMs are running** before retyping their attached volumes across backends. Stopped VMs prevent the volume swap step.
 - Plan retype operations during low-usage windows — migration increases I/O latency and network traffic on the Ceph backend.
 - Ensure volumes have no snapshots before retyping. Use `openstack volume snapshot list --volume <VOL_ID>` to check.
 - Use `--dry-run` to preview operations before executing.
