@@ -8,7 +8,7 @@
 #
 # Author: Ciro Iriarte <ciro.iriarte+software@gmail.com>
 # Created: 2026-03-27
-# Version: 0.1
+# Version: 0.1.1
 #
 # Requirements:
 #   - openstack CLI (python-openstackclient)
@@ -16,16 +16,21 @@
 #   - A sourced OpenStack credentials file (e.g., openrc.sh)
 #
 # Changelog:
-#   - 2026-03-27: v0.1 - Initial release. Interactive wizard and one-shot
-#                         retype modes, volume listing with server filtering,
-#                         volume type listing, pre-flight checks (state
-#                         validation, snapshot detection), interactive volume
-#                         selection, and migration progress monitoring.
+#   - 2026-03-27: v0.1.1 - Fix monitor reacting to stale migration_status=error
+#                          from previous attempts. Add migration_status check
+#                          to pre-flight. Fix empty volume name display. Add
+#                          --handle-snapshots (delete, backup-delete) to resolve
+#                          snapshot blockers automatically.
+#   - 2026-03-27: v0.1   - Initial release. Interactive wizard and one-shot
+#                          retype modes, volume listing with server filtering,
+#                          volume type listing, pre-flight checks (state
+#                          validation, snapshot detection), interactive volume
+#                          selection, and migration progress monitoring.
 
 set -euo pipefail
 
 # --- Configuration ---
-SCRIPT_VERSION="0.1"
+SCRIPT_VERSION="0.1.1"
 
 # Operational defaults
 MODE=""
@@ -38,6 +43,8 @@ POLL_INTERVAL=10
 POLL_TIMEOUT=3600
 RETYPE_FLAG=""
 TARGET_TYPE_ARG=""
+HANDLE_SNAPSHOTS=""
+BACKUP_CONTAINER=""
 declare -a RETYPE_VOLUMES=()
 
 # Counters
@@ -57,6 +64,10 @@ declare -a RESOLVED_VOL_IDS=()
 
 # Interactive selection result
 declare -a SELECTED_VOL_IDS=()
+
+# Snapshot cleanup tracking
+declare -a NEEDS_SNAP_DELETE=()
+declare -A VOL_SNAP_COUNT=()
 
 # --- Colors (disabled when stderr is not a terminal) --------------------------
 if [[ -t 2 ]]; then
@@ -141,6 +152,14 @@ One-shot retype:
   Use -r to specify volumes explicitly, or -s to discover them from a
   server. Combine either with -T to set the destination type.
 
+Snapshot handling:
+      --handle-snapshots MODE  How to handle snapshots blocking retype:
+                               delete         Delete all snapshots
+                               backup-delete  Backup each snapshot then delete
+      --backup-container NAME  Target container for snapshot backups
+                               (required with backup-delete in one-shot mode;
+                               prompted interactively in wizard mode)
+
 Options:
   -f, --format FMT      Output format: table (default), csv, json
   -y, --yes             Skip confirmation prompts (selects all with --server)
@@ -154,7 +173,7 @@ Options:
 Pre-flight checks (automatic):
   - Volume exists and is accessible
   - Volume is in a valid state (in-use or available)
-  - Volume has no snapshots (migration blocker)
+  - Volume has no snapshots (see --handle-snapshots)
   - Target type exists and differs from current type
 
 Requirements:
@@ -176,6 +195,10 @@ Examples:
 
   # Dry run
   $0 -r VOL_ID -T ssd-pool -n
+
+  # Handle snapshots blocking retype
+  $0 -r VOL_ID -T ssd-pool --handle-snapshots delete
+  $0 -r VOL_ID -T ssd-pool --handle-snapshots backup-delete --backup-container my-backups
 
   # Listing
   $0 -l                               List all volumes
@@ -484,10 +507,11 @@ preflight_retype() {
         return 1
     fi
 
-    local vol_name
-    vol_name=$(echo "$vjson" | jq -r '.name // .id')
+    local vol_name migration_status
+    vol_name=$(echo "$vjson" | jq -r 'if (.name // "") == "" then .id else .name end')
     status=$(echo "$vjson" | jq -r '.status // "unknown"')
     vol_type=$(echo "$vjson" | jq -r '.type // .volume_type // "unknown"')
+    migration_status=$(echo "$vjson" | jq -r '.migration_status // "none"')
 
     # Check valid state
     if [[ "$status" != "in-use" && "$status" != "available" ]]; then
@@ -495,11 +519,26 @@ preflight_retype() {
         return 1
     fi
 
+    # Check migration state
+    if [[ "$migration_status" == "migrating" ]]; then
+        err "Volume '${vol_name}' is already migrating. Use -m to monitor it."
+        return 1
+    fi
+    if [[ "$migration_status" == "error" ]]; then
+        warn "Volume '${vol_name}' has a stale migration_status=error from a previous attempt."
+    fi
+
     # Check snapshots
     snap_json=$(fetch_volume_snapshots "$vol_id")
     snap_count=$(echo "$snap_json" | jq 'length')
     if (( snap_count > 0 )); then
+        if [[ -n "$HANDLE_SNAPSHOTS" ]]; then
+            warn "Volume '${vol_name}' has ${snap_count} snapshot(s) — will ${HANDLE_SNAPSHOTS}"
+            VOL_SNAP_COUNT["$vol_id"]=$snap_count
+            return 3
+        fi
         err "Volume '${vol_name}' has ${snap_count} snapshot(s). Remove snapshots before retype."
+        err "Hint: use --handle-snapshots delete or --handle-snapshots backup-delete"
         return 1
     fi
 
@@ -518,6 +557,259 @@ execute_retype() {
     run openstack volume set --type "$target_type" "$RETYPE_FLAG" on-demand "$vol_id"
 }
 
+# --- Snapshot handling functions -----------------------------------------------
+
+delete_volume_snapshots() {
+    local vol_id="$1"
+    local snap_json
+    snap_json=$(fetch_volume_snapshots "$vol_id")
+
+    local snap_id snap_status
+    while IFS= read -r line; do
+        snap_id=$(echo "$line" | jq -r '.ID // .id')
+        snap_status=$(echo "$line" | jq -r '.Status // .status // "unknown"')
+
+        if [[ "$snap_status" == "deleting" ]]; then
+            ok "Snapshot ${snap_id:0:13}... already deleting"
+            continue
+        fi
+        if [[ "$snap_status" == "error_deleting" || "$snap_status" == "error" ]]; then
+            err "Snapshot ${snap_id:0:13}... is in '${snap_status}' state"
+            return 1
+        fi
+        run openstack volume snapshot delete "$snap_id"
+        (( DRY_RUN )) || ok "Deleted snapshot ${snap_id:0:13}..."
+    done < <(echo "$snap_json" | jq -c '.[]')
+}
+
+backup_volume_snapshots() {
+    local vol_id="$1" container="$2"
+    local snap_json
+    snap_json=$(fetch_volume_snapshots "$vol_id")
+
+    local snap_id snap_name backup_name
+    while IFS= read -r line; do
+        snap_id=$(echo "$line" | jq -r '.ID // .id')
+        snap_name=$(echo "$line" | jq -r '.Name // .name // "unnamed"')
+        backup_name="snap-backup-${snap_name}-$(date +%Y%m%d%H%M%S)"
+
+        msg "Backing up snapshot ${snap_name} (${snap_id:0:13}...)..."
+        if ! run openstack volume backup create \
+                --container "$container" \
+                --snapshot "$snap_id" \
+                --name "$backup_name" \
+                "$vol_id"; then
+            err "Backup failed for snapshot ${snap_id:0:13}..."
+            return 1
+        fi
+
+        if (( ! DRY_RUN )); then
+            ok "Backup created: ${backup_name}"
+            if ! wait_backup_ready "$backup_name"; then
+                return 1
+            fi
+        fi
+    done < <(echo "$snap_json" | jq -c '.[]')
+}
+
+wait_backup_ready() {
+    local backup_name="$1"
+    local start_time elapsed status
+    local spin_chars='|/-\'
+    local spin_idx=0
+
+    start_time=$(date +%s)
+
+    while true; do
+        local bjson
+        bjson=$(openstack volume backup show "$backup_name" -f json 2>/dev/null || echo '{}')
+        status=$(echo "$bjson" | jq -r '.status // "unknown"')
+
+        elapsed=$(( $(date +%s) - start_time ))
+        local el_str
+        el_str=$(elapsed_human "$elapsed")
+        local spin_char="${spin_chars:spin_idx:1}"
+        spin_idx=$(( (spin_idx + 1) % 4 ))
+
+        printf "\r   [%s] %-8s  backup: %-20s  status: %s" \
+            "$spin_char" "$el_str" "${backup_name:0:20}" "$status" >&2
+
+        if [[ "$status" == "available" ]]; then
+            printf "\r%-100s\r" "" >&2
+            ok "Backup ready: ${backup_name} (${el_str})"
+            return 0
+        fi
+
+        if [[ "$status" == "error" ]]; then
+            printf "\r%-100s\r" "" >&2
+            err "Backup failed: ${backup_name}"
+            return 1
+        fi
+
+        if (( elapsed >= POLL_TIMEOUT )); then
+            printf "\r%-100s\r" "" >&2
+            warn "Backup timeout: ${backup_name}"
+            return 1
+        fi
+
+        sleep "$POLL_INTERVAL"
+    done
+}
+
+wait_snapshots_deleted() {
+    local vol_id="$1"
+    local start_time elapsed
+    local spin_chars='|/-\'
+    local spin_idx=0
+
+    start_time=$(date +%s)
+
+    while true; do
+        local snap_json remaining
+        snap_json=$(fetch_volume_snapshots "$vol_id")
+        remaining=$(echo "$snap_json" | jq 'length')
+
+        if (( remaining == 0 )); then
+            ok "All snapshots removed"
+            return 0
+        fi
+
+        local error_count
+        error_count=$(echo "$snap_json" | jq \
+            '[.[] | select(.Status == "error_deleting" or .status == "error_deleting")] | length')
+        if (( error_count > 0 )); then
+            err "Snapshot deletion failed (${error_count} in error_deleting state)"
+            return 1
+        fi
+
+        elapsed=$(( $(date +%s) - start_time ))
+        local el_str
+        el_str=$(elapsed_human "$elapsed")
+        local spin_char="${spin_chars:spin_idx:1}"
+        spin_idx=$(( (spin_idx + 1) % 4 ))
+
+        printf "\r   [%s] %-8s  snapshots remaining: %d" \
+            "$spin_char" "$el_str" "$remaining" >&2
+
+        if (( elapsed >= POLL_TIMEOUT )); then
+            printf "\r%-100s\r" "" >&2
+            warn "Timeout waiting for snapshot deletion"
+            return 1
+        fi
+
+        sleep "$POLL_INTERVAL"
+    done
+}
+
+cleanup_snapshots() {
+    if (( ${#NEEDS_SNAP_DELETE[@]} == 0 )); then
+        return 0
+    fi
+
+    msg "Cleaning up snapshots..."
+
+    declare -A _snap_failed=()
+    local vol_id vjson vol_name
+
+    for vol_id in "${NEEDS_SNAP_DELETE[@]}"; do
+        vjson=$(fetch_volume_detail "$vol_id")
+        vol_name=$(echo "$vjson" | jq -r 'if (.name // "") == "" then .id else .name end')
+
+        msg "Handling snapshots for ${vol_name} (${VOL_SNAP_COUNT[$vol_id]:-?} snapshot(s))..."
+
+        # Backup first if requested
+        if [[ "$HANDLE_SNAPSHOTS" == "backup-delete" ]]; then
+            if ! backup_volume_snapshots "$vol_id" "$BACKUP_CONTAINER"; then
+                err "Backup failed for ${vol_name} — skipping retype"
+                _snap_failed["$vol_id"]=1
+                (( RETYPE_FAIL++ )) || true
+                continue
+            fi
+        fi
+
+        # Delete snapshots
+        if ! delete_volume_snapshots "$vol_id"; then
+            err "Snapshot deletion failed for ${vol_name} — skipping retype"
+            _snap_failed["$vol_id"]=1
+            (( RETYPE_FAIL++ )) || true
+            continue
+        fi
+
+        # Wait for deletion to complete
+        if (( ! DRY_RUN )); then
+            printf "\r%-100s\r" "" >&2
+            if ! wait_snapshots_deleted "$vol_id"; then
+                err "Snapshot cleanup incomplete for ${vol_name} — skipping retype"
+                _snap_failed["$vol_id"]=1
+                (( RETYPE_FAIL++ )) || true
+                continue
+            fi
+        fi
+
+        ok "Snapshots cleared for ${vol_name}"
+    done
+
+    # Remove failed volumes from VALID_VOLS
+    if (( ${#_snap_failed[@]} > 0 )); then
+        local _cleaned=()
+        local _v
+        for _v in "${VALID_VOLS[@]}"; do
+            if [[ -z "${_snap_failed[$_v]:-}" ]]; then
+                _cleaned+=("$_v")
+            fi
+        done
+        VALID_VOLS=("${_cleaned[@]}")
+    fi
+}
+
+select_backup_container_interactive() {
+    msg "Available backup containers:"
+    echo "" >&2
+
+    local containers_json
+    containers_json=$(openstack container list -f json 2>/dev/null || echo '[]')
+    local container_count
+    container_count=$(echo "$containers_json" | jq 'length')
+
+    if (( container_count > 0 )); then
+        local sep
+        sep=$(printf '%*s' 50 '' | tr ' ' '-')
+        printf "   %-4s %s\n" "#" "Name" >&2
+        echo "   ${sep}" >&2
+
+        local idx=0
+        while IFS= read -r line; do
+            (( idx++ )) || true
+            local cname
+            cname=$(echo "$line" | jq -r '.Name // .name // "—"')
+            printf "   %-4s %s\n" "${idx}" "$cname" >&2
+        done < <(echo "$containers_json" | jq -c '.[]')
+
+        echo "   ${sep}" >&2
+    else
+        echo "   (no existing containers found)" >&2
+    fi
+    echo "" >&2
+
+    local container_input
+    read -rp "   Enter number or container name (new containers are auto-created): " container_input
+
+    if [[ "$container_input" =~ ^[0-9]+$ ]] && (( container_input >= 1 && container_input <= container_count )); then
+        BACKUP_CONTAINER=$(echo "$containers_json" | jq -r ".[$((container_input - 1))].Name // .[$((container_input - 1))].name")
+    else
+        BACKUP_CONTAINER="$container_input"
+    fi
+
+    if [[ -z "$BACKUP_CONTAINER" ]]; then
+        err "No container specified."
+        return 1
+    fi
+
+    ok "Backup container: ${BACKUP_CONTAINER}"
+}
+
+# --- Monitoring ---------------------------------------------------------------
+
 monitor_volume() {
     local vol_id="$1" vol_name="${2:-$1}"
     local start_time elapsed status migration_status vol_type
@@ -530,12 +822,25 @@ monitor_volume() {
     # Clean exit on Ctrl+C during monitoring
     trap 'printf "\n" >&2; warn "Interrupted. Migration may still be in progress."; trap - INT; return 130' INT
 
+    # Capture initial migration_status to detect stale state
+    local initial_mig_status
+    initial_mig_status=$(echo "$(fetch_volume_detail "$vol_id")" | jq -r '.migration_status // "none"')
+    local state_changed=0
+
+    # Give Cinder time to accept the retype before first poll
+    sleep "$POLL_INTERVAL"
+
     while true; do
         local vjson
         vjson=$(fetch_volume_detail "$vol_id")
         status=$(echo "$vjson" | jq -r '.status // "unknown"')
         migration_status=$(echo "$vjson" | jq -r '.migration_status // "none"')
         vol_type=$(echo "$vjson" | jq -r '.type // .volume_type // "unknown"')
+
+        # Detect that state has actually changed from initial
+        if [[ "$migration_status" != "$initial_mig_status" ]]; then
+            state_changed=1
+        fi
 
         elapsed=$(( $(date +%s) - start_time ))
         local el_str
@@ -556,11 +861,15 @@ monitor_volume() {
         fi
 
         if [[ "$migration_status" == "error" ]] || [[ "$status" == error* ]]; then
-            printf "\r%-100s\r" "" >&2
-            err "Migration failed after ${el_str}"
-            err "Final: status=${status}  type=${vol_type}  migration=${migration_status}"
-            trap - INT
-            return 1
+            if (( state_changed )); then
+                # Error occurred AFTER state transition — real failure
+                printf "\r%-100s\r" "" >&2
+                err "Migration failed after ${el_str}"
+                err "Final: status=${status}  type=${vol_type}  migration=${migration_status}"
+                trap - INT
+                return 1
+            fi
+            # Stale error from previous attempt — keep waiting for transition
         fi
 
         if (( elapsed >= POLL_TIMEOUT )); then
@@ -592,7 +901,7 @@ confirm_prompt() {
     local vid vjson vname vtype vstatus
     for vid in "${vol_ids[@]}"; do
         vjson=$(fetch_volume_detail "$vid")
-        vname=$(echo "$vjson" | jq -r '.name // "—"')
+        vname=$(echo "$vjson" | jq -r 'if (.name // "") == "" then .id[0:12] + "..." else .name end')
         vtype=$(echo "$vjson" | jq -r '.type // .volume_type // "—"')
         vstatus=$(echo "$vjson" | jq -r '.status // "—"')
         printf "   %-36s  %-22s  %-18s  %-10s\n" \
@@ -603,6 +912,24 @@ confirm_prompt() {
     echo "   Target type : ${target_type}" >&2
     echo "   Policy      : on-demand (via ${RETYPE_FLAG})" >&2
     echo "   Volumes     : ${#vol_ids[@]}" >&2
+
+    # Show snapshot cleanup warnings
+    if (( ${#NEEDS_SNAP_DELETE[@]} > 0 )); then
+        echo "" >&2
+        local action_desc="delete"
+        [[ "$HANDLE_SNAPSHOTS" == "backup-delete" ]] && action_desc="backup then delete"
+        echo "   Snapshot cleanup (${action_desc}):" >&2
+        local _sv _sname
+        for _sv in "${NEEDS_SNAP_DELETE[@]}"; do
+            _sname=$(echo "$(fetch_volume_detail "$_sv")" | jq -r 'if (.name // "") == "" then .id else .name end')
+            printf "     %-36s  %-22s  %d snapshot(s)\n" \
+                "$_sv" "${_sname:0:22}" "${VOL_SNAP_COUNT[$_sv]:-0}" >&2
+        done
+        if [[ "$HANDLE_SNAPSHOTS" == "backup-delete" ]]; then
+            echo "   Backup container: ${BACKUP_CONTAINER}" >&2
+        fi
+    fi
+
     echo "" >&2
 
     if (( AUTO_YES )); then
@@ -640,7 +967,7 @@ select_volumes_interactive() {
     for vid in "${vol_ids[@]}"; do
         (( idx++ )) || true
         vjson=$(fetch_volume_detail "$vid")
-        vname=$(echo "$vjson" | jq -r '.name // "—"')
+        vname=$(echo "$vjson" | jq -r 'if (.name // "") == "" then .id[0:12] + "..." else .name end')
         vsize=$(echo "$vjson" | jq -r '.size // 0')
         vtype=$(echo "$vjson" | jq -r '.type // .volume_type // "—"')
         vstatus=$(echo "$vjson" | jq -r '.status // "—"')
@@ -759,12 +1086,16 @@ run_preflight() {
 
     msg "Running pre-flight checks..."
     VALID_VOLS=()
+    NEEDS_SNAP_DELETE=()
     local vid pf_rc
     for vid in "${vol_ids[@]}"; do
         pf_rc=0
         preflight_retype "$vid" "$target_type" || pf_rc=$?
         if (( pf_rc == 0 )); then
             VALID_VOLS+=("$vid")
+        elif (( pf_rc == 3 )); then
+            VALID_VOLS+=("$vid")
+            NEEDS_SNAP_DELETE+=("$vid")
         elif (( pf_rc == 2 )); then
             (( RETYPE_SKIP++ )) || true
         else
@@ -787,7 +1118,7 @@ execute_retype_batch() {
     for vid in "${vol_ids[@]}"; do
         (( current++ )) || true
         vol_json=$(fetch_volume_detail "$vid")
-        vol_name=$(echo "$vol_json" | jq -r '.name // .id')
+        vol_name=$(echo "$vol_json" | jq -r 'if (.name // "") == "" then .id else .name end')
 
         if (( total > 1 )); then
             echo "" >&2
@@ -887,6 +1218,9 @@ interactive_mode() {
     ok "Target type: ${target_type}"
 
     # Step 3: Pre-flight checks
+    # Allow snapshots to be detected (resolved interactively below)
+    [[ -z "$HANDLE_SNAPSHOTS" ]] && HANDLE_SNAPSHOTS="ask"
+
     echo "" >&2
     msg "Step 3: Pre-flight checks"
     run_preflight "$target_type" "${SELECTED_VOL_IDS[@]}"
@@ -896,11 +1230,69 @@ interactive_mode() {
         exit 1
     fi
 
+    # Step 3b: Handle snapshots interactively
+    if (( ${#NEEDS_SNAP_DELETE[@]} > 0 )) && [[ "$HANDLE_SNAPSHOTS" == "ask" ]]; then
+        echo "" >&2
+        msg "Some volumes have snapshots that block retype:"
+        local _sv _sn
+        for _sv in "${NEEDS_SNAP_DELETE[@]}"; do
+            _sn=$(echo "$(fetch_volume_detail "$_sv")" | jq -r 'if (.name // "") == "" then .id else .name end')
+            echo "     ${_sn} — ${VOL_SNAP_COUNT[$_sv]:-?} snapshot(s)" >&2
+        done
+        echo "" >&2
+        echo "   How to handle snapshots?" >&2
+        echo "   1) delete         — Delete snapshots (data lost)" >&2
+        echo "   2) backup-delete  — Backup snapshots then delete" >&2
+        echo "   3) skip           — Skip these volumes" >&2
+        echo "" >&2
+
+        local snap_choice
+        read -rp "   Select [1-3]: " snap_choice
+        case "$snap_choice" in
+            1)
+                HANDLE_SNAPSHOTS="delete"
+                ;;
+            2)
+                HANDLE_SNAPSHOTS="backup-delete"
+                echo "" >&2
+                if ! select_backup_container_interactive; then
+                    exit 1
+                fi
+                ;;
+            *)
+                HANDLE_SNAPSHOTS=""
+                # Remove snapshot-blocked volumes from VALID_VOLS
+                declare -A _skip_snaps=()
+                for _sv in "${NEEDS_SNAP_DELETE[@]}"; do
+                    _skip_snaps["$_sv"]=1
+                    (( RETYPE_SKIP++ )) || true
+                done
+                local _cleaned=()
+                local _cv
+                for _cv in "${VALID_VOLS[@]}"; do
+                    [[ -z "${_skip_snaps[$_cv]:-}" ]] && _cleaned+=("$_cv")
+                done
+                VALID_VOLS=("${_cleaned[@]}")
+                NEEDS_SNAP_DELETE=()
+                if (( ${#VALID_VOLS[@]} == 0 )); then
+                    err "No volumes eligible for retype."
+                    exit 1
+                fi
+                ;;
+        esac
+    fi
+
     # Step 4: Confirm and execute
     echo "" >&2
     msg "Step 4: Confirm and execute"
     if ! confirm_prompt "$target_type" "${VALID_VOLS[@]}"; then
         exit 0
+    fi
+
+    cleanup_snapshots
+    if (( ${#VALID_VOLS[@]} == 0 )); then
+        err "No volumes remaining after snapshot cleanup."
+        exit 1
     fi
 
     execute_retype_batch "$target_type" "${VALID_VOLS[@]}"
@@ -912,7 +1304,7 @@ interactive_mode() {
 
 # --- Argument Parsing ---------------------------------------------------------
 OPTIONS=$(getopt -o hvilr:T:tmns:f:y \
-    --long help,version,interactive,list,retype:,type:,types,monitor,dry-run,server:,format:,yes,no-monitor,interval:,timeout: \
+    --long help,version,interactive,list,retype:,type:,types,monitor,dry-run,server:,format:,yes,no-monitor,interval:,timeout:,handle-snapshots:,backup-container: \
     -n "$0" -- "$@")
 if [[ $? -ne 0 ]]; then
     echo "Failed to parse options." >&2
@@ -983,6 +1375,14 @@ while true; do
             POLL_TIMEOUT="$2"
             shift 2
             ;;
+        --handle-snapshots)
+            HANDLE_SNAPSHOTS="$2"
+            shift 2
+            ;;
+        --backup-container)
+            BACKUP_CONTAINER="$2"
+            shift 2
+            ;;
         --)
             shift
             break
@@ -1037,6 +1437,17 @@ fi
 if ! [[ "$POLL_TIMEOUT" =~ ^[0-9]+$ ]] || (( POLL_TIMEOUT < 1 )); then
     err "Invalid timeout '${POLL_TIMEOUT}'. Must be a positive integer."
     exit 1
+fi
+
+if [[ -n "$HANDLE_SNAPSHOTS" && "$HANDLE_SNAPSHOTS" != "ask" ]]; then
+    case "$HANDLE_SNAPSHOTS" in
+        delete|backup-delete) ;;
+        *) err "Invalid --handle-snapshots mode '${HANDLE_SNAPSHOTS}'. Use: delete, backup-delete"; exit 1 ;;
+    esac
+    if [[ "$HANDLE_SNAPSHOTS" == "backup-delete" && -z "$BACKUP_CONTAINER" && "$MODE" != "interactive" ]]; then
+        err "--backup-container is required with --handle-snapshots backup-delete"
+        exit 1
+    fi
 fi
 
 case "$MODE" in
@@ -1133,6 +1544,13 @@ case "$MODE" in
             exit 0
         fi
 
+        # Snapshot cleanup
+        cleanup_snapshots
+        if (( ${#VALID_VOLS[@]} == 0 )); then
+            err "No volumes remaining after snapshot cleanup."
+            exit 1
+        fi
+
         # Execute
         execute_retype_batch "$TARGET_TYPE" "${VALID_VOLS[@]}"
 
@@ -1149,7 +1567,7 @@ case "$MODE" in
             err "Volume '${MON_VOL}' not found or not accessible."
             exit 1
         fi
-        MON_NAME=$(echo "$MON_JSON" | jq -r '.name // .id')
+        MON_NAME=$(echo "$MON_JSON" | jq -r 'if (.name // "") == "" then .id else .name end')
         monitor_volume "$MON_VOL" "$MON_NAME"
         ;;
 esac

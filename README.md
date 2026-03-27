@@ -28,7 +28,7 @@ A collection of Bash wrappers and tools to simplify OpenStack usage via the open
 |---|---|---|---|
 | `osu-import-cloud-images.sh` | ![v1.2](https://img.shields.io/badge/version-1.2-blue) | 2026-03-12 | 2026-03-26 |
 | `osu-memory-usage-report.sh` | ![v0.2](https://img.shields.io/badge/version-0.2-orange) | 2025-12-24 | 2026-03-26 |
-| `osu-retype-vdisk.sh` | ![v0.1](https://img.shields.io/badge/version-0.1-orange) | 2026-03-27 | 2026-03-27 |
+| `osu-retype-vdisk.sh` | ![v0.1.1](https://img.shields.io/badge/version-0.1.1-orange) | 2026-03-27 | 2026-03-27 |
 
 All scripts support `--version` / `-v` and `--help` / `-h` flags.
 
@@ -292,6 +292,12 @@ Retypes (migrates) OpenStack Cinder volumes between Ceph pools by changing the v
 
 # Dry run
 ./osu-retype-vdisk.sh -r VOL_ID -T ssd-pool -n
+
+# Handle snapshots blocking retype (delete)
+./osu-retype-vdisk.sh -r VOL_ID -T ssd-pool --handle-snapshots delete
+
+# Handle snapshots blocking retype (backup then delete)
+./osu-retype-vdisk.sh -r VOL_ID -T ssd-pool --handle-snapshots backup-delete --backup-container vol-snap-backups
 
 # Monitor an in-progress migration
 ./osu-retype-vdisk.sh -m VOL_ID

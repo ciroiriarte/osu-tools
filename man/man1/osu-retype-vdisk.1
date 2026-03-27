@@ -1,6 +1,6 @@
 .\" Man page for osu-retype-vdisk.sh
 .\" Written in classic troff/groff format
-.TH OSU-RETYPE-VDISK 1 "2026-03-27" "osu-retype-vdisk 0.1" "User Commands"
+.TH OSU-RETYPE-VDISK 1 "2026-03-27" "osu-retype-vdisk 0.1.1" "User Commands"
 .SH NAME
 osu-retype-vdisk \- retype (migrate) OpenStack volumes between Ceph pools
 .SH SYNOPSIS
@@ -183,6 +183,36 @@ Polling interval in seconds for migration monitoring (default: 10).
 Maximum wait time in seconds for migration monitoring (default: 3600).
 If the timeout is reached, the script exits with a warning; the migration
 may still be in progress on the backend.
+.SH SNAPSHOT HANDLING
+Volumes with existing snapshots cannot be retyped.
+By default, such volumes fail the pre-flight check.
+The
+.B \-\-handle\-snapshots
+option provides two strategies to resolve this automatically:
+.TP
+.BI \-\-handle\-snapshots " delete"
+Delete all snapshots of the affected volume(s) before retyping.
+This is destructive: point-in-time recovery data is lost.
+.TP
+.BI \-\-handle\-snapshots " backup\-delete"
+Backup each snapshot to an object store container, wait for the backup
+to complete, then delete the snapshot.
+Requires
+.BR \-\-backup\-container
+to specify the target container (in one-shot mode).
+In interactive mode, the user is prompted to select or name a container.
+.TP
+.BI \-\-backup\-container " NAME"
+Object store container name for snapshot backups.
+Required with
+.BR "\-\-handle\-snapshots backup\-delete"
+in one-shot mode.
+New containers are created automatically by the backup driver.
+.PP
+In interactive mode (\fB\-i\fR), if snapshots are detected and no
+.B \-\-handle\-snapshots
+flag was provided, the wizard prompts the user to choose a strategy
+(delete, backup-delete, or skip the affected volumes).
 .SH VOLUME SELECTION
 When
 .B \-\-retype
@@ -335,6 +365,18 @@ Dry run (preview without executing):
 .B osu-retype-vdisk.sh -r VOL_ID -T ssd-pool -n
 .RE
 .PP
+Retype a volume with snapshots (delete them first):
+.PP
+.RS
+.B osu-retype-vdisk.sh -r VOL_ID -T ssd-pool --handle-snapshots delete
+.RE
+.PP
+Retype a volume with snapshots (backup then delete):
+.PP
+.RS
+.B osu-retype-vdisk.sh -r VOL_ID -T ssd-pool --handle-snapshots backup-delete --backup-container vol-snap-backups
+.RE
+.PP
 Monitor an in-progress migration:
 .PP
 .RS
@@ -349,7 +391,9 @@ Monitor with a custom polling interval:
 .SH CAVEATS
 .IP \(bu 3
 Volumes with existing snapshots cannot be retyped.
-Delete or flatten snapshots before attempting a retype.
+Use
+.B \-\-handle\-snapshots
+to delete or backup-and-delete snapshots automatically.
 .IP \(bu
 Migration increases I/O latency and network traffic on the Ceph storage
 backend while data is being copied.
