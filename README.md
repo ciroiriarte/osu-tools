@@ -14,6 +14,7 @@ A collection of Bash wrappers and tools to simplify OpenStack usage via the open
 - [Scripts](#-scripts)
   - [osu-import-cloud-images.sh](#-osu-import-cloud-imagessh)
   - [osu-memory-usage-report.sh](#-osu-memory-usage-reportsh)
+  - [osu-retype-vdisk.sh](#-osu-retype-vdisksh)
 - [Documentation](#-documentation)
 - [Contributing](#-contributing)
 - [License](#-license)
@@ -27,6 +28,7 @@ A collection of Bash wrappers and tools to simplify OpenStack usage via the open
 |---|---|---|---|
 | `osu-import-cloud-images.sh` | ![v1.2](https://img.shields.io/badge/version-1.2-blue) | 2026-03-12 | 2026-03-26 |
 | `osu-memory-usage-report.sh` | ![v0.2](https://img.shields.io/badge/version-0.2-orange) | 2025-12-24 | 2026-03-26 |
+| `osu-retype-vdisk.sh` | ![v0.1](https://img.shields.io/badge/version-0.1-orange) | 2026-03-27 | 2026-03-27 |
 
 All scripts support `--version` / `-v` and `--help` / `-h` flags.
 
@@ -224,6 +226,84 @@ Provides an accurate summary of OpenStack resources per domain, with a per-proje
 
 # Display help
 ./osu-memory-usage-report.sh --help
+```
+
+---
+
+### 🔍 `osu-retype-vdisk.sh`
+
+Retypes (migrates) OpenStack Cinder volumes between Ceph pools by changing the volume type. Provides both an interactive wizard and a one-shot CLI mode with pre-flight validation (state checks, snapshot detection), interactive volume selection, and automated migration progress monitoring.
+
+- **Author:** Ciro Iriarte
+- **Created:** 2026-03-27
+- **Updated:** 2026-03-27
+
+#### ⚙️ Requirements
+
+- Required tools:
+  - `openstack` CLI (python-openstackclient)
+  - `jq`
+- A sourced OpenStack credentials file (e.g., `openrc.sh`)
+- No admin privileges required for normal operations
+
+#### 💡 Recommendations
+
+- Source your OpenStack credentials before running:
+  ```bash
+  source ~/openrc.sh
+  ```
+- Plan retype operations during low-usage windows — migration increases I/O latency and network traffic on the Ceph backend.
+- Ensure volumes have no snapshots before retyping. Use `openstack volume snapshot list --volume <VOL_ID>` to check.
+- Use `--dry-run` to preview operations before executing.
+- For large batch operations, consider using `--no-monitor` and manually checking progress with `-m` to avoid long wait times.
+
+#### 🚀 Usage
+
+```bash
+# Interactive wizard (default on TTY)
+./osu-retype-vdisk.sh -i
+
+# List all volumes
+./osu-retype-vdisk.sh -l
+
+# List volumes attached to a VM
+./osu-retype-vdisk.sh -l -s web-server-01
+
+# List volumes as JSON
+./osu-retype-vdisk.sh -l -f json
+
+# List available volume types (retype targets)
+./osu-retype-vdisk.sh -t
+
+# One-shot: retype a single volume
+./osu-retype-vdisk.sh -r VOL_ID -T ssd-pool
+
+# One-shot: retype multiple volumes (repeated -r)
+./osu-retype-vdisk.sh -r VOL1_ID -r VOL2_ID -T ssd-pool
+
+# One-shot: retype multiple volumes (comma-separated)
+./osu-retype-vdisk.sh -r VOL1_ID,VOL2_ID -T ssd-pool
+
+# One-shot: retype volumes of a VM (interactive pick)
+./osu-retype-vdisk.sh -s web-server-01 -T ssd-pool
+
+# One-shot: retype all VM volumes non-interactively
+./osu-retype-vdisk.sh -s web-server-01 -T ssd-pool -y
+
+# Dry run
+./osu-retype-vdisk.sh -r VOL_ID -T ssd-pool -n
+
+# Monitor an in-progress migration
+./osu-retype-vdisk.sh -m VOL_ID
+
+# Monitor with custom polling interval
+./osu-retype-vdisk.sh -m VOL_ID --interval 5
+
+# Display version
+./osu-retype-vdisk.sh --version
+
+# Display help
+./osu-retype-vdisk.sh --help
 ```
 
 ---

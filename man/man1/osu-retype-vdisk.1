@@ -1,0 +1,369 @@
+.\" Man page for osu-retype-vdisk.sh
+.\" Written in classic troff/groff format
+.TH OSU-RETYPE-VDISK 1 "2026-03-27" "osu-retype-vdisk 0.1" "User Commands"
+.SH NAME
+osu-retype-vdisk \- retype (migrate) OpenStack volumes between Ceph pools
+.SH SYNOPSIS
+.B osu-retype-vdisk.sh
+.RB [ \-h | \-\-help ]
+.RB [ \-v | \-\-version ]
+.PP
+.B osu-retype-vdisk.sh
+.RB [ \-i | \-\-interactive ]
+.RB [ \-n | \-\-dry\-run ]
+.PP
+.B osu-retype-vdisk.sh
+.RB { \-r | \-\-retype
+.IR VOL_ID }...
+.RB \-T | \-\-type
+.I TARGET_TYPE
+.RB [ \-y | \-\-yes ]
+.RB [ \-n | \-\-dry\-run ]
+.RB [ \-\-no\-monitor ]
+.RB [ \-\-interval
+.IR SEC ]
+.RB [ \-\-timeout
+.IR SEC ]
+.PP
+.B osu-retype-vdisk.sh
+.RB \-s | \-\-server
+.IR NAME | ID
+.RB \-T | \-\-type
+.I TARGET_TYPE
+.RB [ \-y | \-\-yes ]
+.RB [ \-n | \-\-dry\-run ]
+.RB [ \-\-no\-monitor ]
+.RB [ \-\-interval
+.IR SEC ]
+.RB [ \-\-timeout
+.IR SEC ]
+.PP
+.B osu-retype-vdisk.sh
+.RB \-l | \-\-list
+.RB [ \-s | \-\-server
+.IR NAME | ID ]
+.RB [ \-f | \-\-format
+.IR FMT ]
+.PP
+.B osu-retype-vdisk.sh
+.RB \-t | \-\-types
+.RB [ \-f | \-\-format
+.IR FMT ]
+.PP
+.B osu-retype-vdisk.sh
+.RB \-m | \-\-monitor
+.RB [ \-\-interval
+.IR SEC ]
+.RB [ \-\-timeout
+.IR SEC ]
+.I VOL_ID
+.SH DESCRIPTION
+.B osu-retype-vdisk.sh
+retypes (migrates) OpenStack Cinder volumes between Ceph pools by changing
+the volume type.
+It wraps the
+.B openstack volume set \-\-type
+command with pre-flight validation, progress monitoring, and both an
+interactive wizard and a one-shot CLI interface.
+.PP
+The retype operation triggers a backend-assisted data copy between Ceph
+pools.
+Cinder coordinates with Nova for attached (in-use) volumes: data is copied
+at the storage backend level, and Nova performs a hot-swap of the volume
+attachment once the copy completes.
+Detached (available) volumes are migrated transparently.
+.PP
+.B Pre-flight checks
+are performed automatically before each retype:
+.IP \(bu 3
+Volume exists and is accessible
+.IP \(bu
+Volume is in a valid state (\fBin-use\fR or \fBavailable\fR)
+.IP \(bu
+Volume has no snapshots (snapshots block migration)
+.IP \(bu
+Target type exists and differs from the current type
+.SH MODES
+.TP
+.BR \-i ", " \-\-interactive
+Guided wizard mode.
+The script walks the user through volume discovery, target type selection,
+pre-flight checks, confirmation, and monitored execution.
+This is the default when running on a TTY without arguments.
+.TP
+.BR \-r ", " \-\-retype " " \fIVOL_ID\fR
+Specify a volume to retype.
+Repeatable: use multiple
+.B \-r
+flags for multiple volumes, or pass a comma-separated list
+(e.g.
+.BR "\-r vol1,vol2" ).
+Requires
+.BR \-T / \-\-type
+to specify the target type.
+.TP
+.BR \-T ", " \-\-type " " \fITYPE\fR
+Target volume type for the retype operation.
+Required when using
+.B \-r
+or
+.BR \-s .
+The type can be specified by name or ID.
+.TP
+.BR \-s ", " \-\-server " " \fINAME\fR|\fIID\fR " (retype mode)"
+Discover volumes from a server instead of specifying them with
+.BR \-r .
+When combined with
+.BR \-T / \-\-type ,
+the script enters retype mode, displays the server's volumes, and
+prompts the user to select which ones to retype.
+When
+.B \-\-yes
+is used, all volumes are selected automatically.
+.TP
+.BR \-l ", " \-\-list
+List volumes visible to the current user.
+When combined with
+.BR \-s / \-\-server ,
+only volumes attached to that server are shown.
+.TP
+.BR \-t ", " \-\-types
+List available volume types (possible retype targets).
+.TP
+.BR \-m ", " \-\-monitor
+Monitor an in-progress migration for a single volume.
+Polls the volume status at a configurable interval and exits when the
+migration succeeds, fails, or times out.
+.SH OPTIONS
+.TP
+.BR \-v ", " \-\-version
+Display version information and exit.
+.TP
+.BR \-h ", " \-\-help
+Display usage information and exit.
+.TP
+.BR \-s ", " \-\-server " " \fINAME\fR|\fIID\fR
+With
+.BR \-l / \-\-list :
+filter volumes by server.
+With
+.BR \-T / \-\-type :
+discover volumes from the server for retype (interactive selection).
+.TP
+.BR \-f ", " \-\-format " " \fIFMT\fR
+Output format for
+.B \-\-list
+and
+.BR \-\-types :
+.BR table
+(default),
+.BR csv ,
+or
+.BR json .
+Structured output (CSV, JSON) goes to standard output with no progress
+decoration.
+.TP
+.BR \-y ", " \-\-yes
+Skip confirmation prompts.
+When combined with
+.BR \-\-server ,
+all volumes are selected without interactive picking.
+.TP
+.BR \-n ", " \-\-dry\-run
+Show what would be done without making changes.
+.TP
+.B \-\-no\-monitor
+Skip automatic progress monitoring after retype.
+The retype command is issued and the script exits immediately.
+.TP
+.BI \-\-interval " SEC"
+Polling interval in seconds for migration monitoring (default: 10).
+.TP
+.BI \-\-timeout " SEC"
+Maximum wait time in seconds for migration monitoring (default: 3600).
+If the timeout is reached, the script exits with a warning; the migration
+may still be in progress on the backend.
+.SH VOLUME SELECTION
+When
+.B \-\-retype
+is combined with
+.BR \-\-server ,
+the script displays a numbered table of volumes attached to the server
+and prompts the user to select which ones to retype.
+.PP
+Accepted input formats:
+.IP \(bu 3
+A single number (e.g.
+.BR 3 )
+.IP \(bu
+Comma-separated numbers (e.g.
+.BR 1,3,5 )
+.IP \(bu
+Ranges (e.g.
+.BR 2\-5 )
+.IP \(bu
+.B all
+to select every volume
+.PP
+When
+.B \-\-yes
+is active, all volumes are selected automatically.
+.SH RETYPE FLAG DETECTION
+Different versions of
+.BR python-openstackclient (1)
+use different flag names for the migration policy:
+.IP \(bu 3
+.B \-\-retype\-policy
+(modern versions)
+.IP \(bu
+.B \-\-migration\-policy
+(older versions)
+.PP
+The script automatically detects the correct flag by inspecting the output
+of
+.BR "openstack volume set \-\-help" .
+The detected flag is displayed during execution.
+.SH MIGRATION STATES
+During retype, the Cinder volume transitions through these states:
+.PP
+.TS
+tab(|);
+lb lb
+l l.
+Field|Progression
+_
+status|in-use \(-> retyping \(-> in-use
+migration_status|(none) \(-> migrating \(-> success
+type|old-type \(-> new-type
+.TE
+.PP
+On failure,
+.B migration_status
+changes to
+.BR error .
+The monitor mode tracks these fields and exits accordingly.
+.SH REQUIREMENTS
+The following commands must be available in
+.BR PATH :
+.PP
+.RS
+.BR openstack (1)
+(python-openstackclient),
+.BR jq (1)
+.RE
+.PP
+An OpenStack credentials file must be sourced before running the script
+(e.g.,
+.IR openrc.sh ).
+No admin privileges are required for normal operations (listing volumes,
+retyping own volumes).
+.SH EXIT STATUS
+.TP
+.B 0
+Successful execution.
+.TP
+.B 1
+Error: missing dependencies, authentication failure, pre-flight check
+failure, retype command failure, migration error, or timeout.
+.TP
+.B 130
+Interrupted by user (Ctrl+C) during monitoring.
+.SH EXAMPLES
+Start the interactive wizard:
+.PP
+.RS
+.B osu-retype-vdisk.sh -i
+.RE
+.PP
+List all volumes:
+.PP
+.RS
+.B osu-retype-vdisk.sh -l
+.RE
+.PP
+List volumes attached to a specific server:
+.PP
+.RS
+.B osu-retype-vdisk.sh -l -s web-server-01
+.RE
+.PP
+List volumes as JSON (for scripting):
+.PP
+.RS
+.B osu-retype-vdisk.sh -l -f json
+.RE
+.PP
+List available volume types:
+.PP
+.RS
+.B osu-retype-vdisk.sh -t
+.RE
+.PP
+Retype a single volume (one-shot):
+.PP
+.RS
+.B osu-retype-vdisk.sh -r a1b2c3d4-e5f6-7890-abcd-ef1234567890 -T ssd-pool
+.RE
+.PP
+Retype multiple volumes (repeated -r):
+.PP
+.RS
+.B osu-retype-vdisk.sh -r VOL1_ID -r VOL2_ID -T ssd-pool
+.RE
+.PP
+Retype multiple volumes (comma-separated):
+.PP
+.RS
+.B osu-retype-vdisk.sh -r VOL1_ID,VOL2_ID -T ssd-pool
+.RE
+.PP
+Retype volumes of a server (interactive selection):
+.PP
+.RS
+.B osu-retype-vdisk.sh -s web-server-01 -T ssd-pool
+.RE
+.PP
+Retype all volumes of a server non-interactively:
+.PP
+.RS
+.B osu-retype-vdisk.sh -s web-server-01 -T ssd-pool -y
+.RE
+.PP
+Dry run (preview without executing):
+.PP
+.RS
+.B osu-retype-vdisk.sh -r VOL_ID -T ssd-pool -n
+.RE
+.PP
+Monitor an in-progress migration:
+.PP
+.RS
+.B osu-retype-vdisk.sh -m a1b2c3d4-e5f6-7890-abcd-ef1234567890
+.RE
+.PP
+Monitor with a custom polling interval:
+.PP
+.RS
+.B osu-retype-vdisk.sh -m VOL_ID --interval 5 --timeout 7200
+.RE
+.SH CAVEATS
+.IP \(bu 3
+Volumes with existing snapshots cannot be retyped.
+Delete or flatten snapshots before attempting a retype.
+.IP \(bu
+Migration increases I/O latency and network traffic on the Ceph storage
+backend while data is being copied.
+Plan migrations during low-usage windows when possible.
+.IP \(bu
+Volumes are retyped sequentially (one at a time) to avoid overwhelming
+the storage backend.
+.IP \(bu
+Cinder does not report migration progress as a percentage.
+The monitor displays elapsed time and status fields only.
+.SH AUTHORS
+Ciro Iriarte <ciro.iriarte+software@gmail.com>
+.SH SEE ALSO
+.BR openstack (1),
+.BR jq (1),
+.BR osu-import-cloud-images (1),
+.BR osu-memory-usage-report (1)

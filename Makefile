@@ -10,3 +10,4 @@ install-man:
 uninstall-man:
 	rm -f $(DESTDIR)$(MANDIR)/man1/osu-import-cloud-images.1
 	rm -f $(DESTDIR)$(MANDIR)/man1/osu-memory-usage-report.1
+	rm -f $(DESTDIR)$(MANDIR)/man1/osu-retype-vdisk.1
