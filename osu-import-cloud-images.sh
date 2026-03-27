@@ -6,7 +6,7 @@
 #
 # Author: Ciro Iriarte <ciro.iriarte+software@gmail.com>
 # Created: 2026-03-12
-# Version: 1.2
+# Version: 1.2.1
 #
 # Requirements:
 #   - openstack CLI (python-openstackclient) configured with admin credentials
@@ -16,7 +16,11 @@
 #   - jq
 #
 # Changelog:
-#   - 2026-03-26: v1.2 - Fix guest-agent injection in proxy-only and
+#   - 2026-03-27: v1.2.1 - Add xz to dependency checks (required for .xz
+#                           image decompression). Run check_import_deps
+#                           unconditionally so dry-run mode also validates
+#                           required tools.
+#   - 2026-03-26: v1.2   - Fix guest-agent injection in proxy-only and
 #                         restricted-network environments. The libguestfs
 #                         appliance SLIRP interface is now brought up via
 #                         DHCP before package installation. Proxy env vars
@@ -39,7 +43,7 @@
 set -euo pipefail
 
 # --- Configuration ---
-SCRIPT_VERSION="1.2"
+SCRIPT_VERSION="1.2.1"
 TIMESTAMP=$(date '+%Y%m%d.%H%M')
 CACHE_DIR="/var/tmp/os-cloud-images"
 MAX_VERSIONS=2
@@ -450,7 +454,7 @@ check_fetch_deps() {
 
 check_import_deps() {
     local missing=()
-    for cmd in openstack qemu-img jq; do
+    for cmd in openstack qemu-img jq xz; do
         command -v "$cmd" &>/dev/null || missing+=("$cmd")
     done
     if (( ${#missing[@]} > 0 )); then
@@ -1040,9 +1044,7 @@ if [[ "$MODE" == "list" ]]; then
     exit 0
 fi
 
-if (( ! DRY_RUN )); then
-    check_import_deps
-fi
+check_import_deps
 
 declare -a SELECTED=()
 

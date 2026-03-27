@@ -26,7 +26,7 @@ A collection of Bash wrappers and tools to simplify OpenStack usage via the open
 
 | Script | Version | Created | Updated |
 |---|---|---|---|
-| `osu-import-cloud-images.sh` | ![v1.2](https://img.shields.io/badge/version-1.2-blue) | 2026-03-12 | 2026-03-26 |
+| `osu-import-cloud-images.sh` | ![v1.2.1](https://img.shields.io/badge/version-1.2.1-blue) | 2026-03-12 | 2026-03-27 |
 | `osu-memory-usage-report.sh` | ![v0.2](https://img.shields.io/badge/version-0.2-orange) | 2025-12-24 | 2026-03-26 |
 | `osu-retype-vdisk.sh` | ![v0.1.1](https://img.shields.io/badge/version-0.1.1-orange) | 2026-03-27 | 2026-03-27 |
 
