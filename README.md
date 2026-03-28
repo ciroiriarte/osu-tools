@@ -352,6 +352,28 @@ After installation, use `man <script-name>` to view the man page (e.g., `man osu
 sudo make uninstall-man
 ```
 
+### Bash Completion
+
+Tab completion is available for all scripts, providing automatic completion of options, enumerated values (e.g., `--format`, `--handle-vm-state`), and live OpenStack resources (volume IDs, server names, volume types).
+
+**Load for the current session:**
+
+```bash
+source completions/osu-tools.bash
+```
+
+**Install system-wide** (persists across sessions):
+
+```bash
+sudo make install-completions
+```
+
+**Uninstall:**
+
+```bash
+sudo make uninstall-completions
+```
+
 ---
 
 ## 🤝 Contributing
