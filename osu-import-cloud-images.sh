@@ -6,7 +6,7 @@
 #
 # Author: Ciro Iriarte <ciro.iriarte+software@gmail.com>
 # Created: 2026-03-12
-# Version: 1.2.2
+# Version: 1.2.3
 #
 # Requirements:
 #   - openstack CLI (python-openstackclient) configured with admin credentials
@@ -16,6 +16,12 @@
 #   - jq
 #
 # Changelog:
+#   - 2026-03-28: v1.2.3 - Fix guest-agent injection on Ubuntu 24.04+ and
+#                           Debian 13+ where dhclient was removed. Use
+#                           --install flag (libguestfs handles SLIRP internally)
+#                           for non-proxy environments. Proxy environments keep
+#                           --run-command with dhclient for proxy injection.
+#                           Move cache dir to ~/os-cloud-images for snap access.
 #   - 2026-03-28: v1.2.2 - Move cache dir from /var/tmp to ~/.cache to fix
 #                           Glance upload failures with snap-confined openstack
 #                           CLI (snap cannot access /tmp or /var/tmp).
@@ -46,7 +52,7 @@
 set -euo pipefail
 
 # --- Configuration ---
-SCRIPT_VERSION="1.2.2"
+SCRIPT_VERSION="1.2.3"
 TIMESTAMP=$(date '+%Y%m%d.%H%M')
 # Use a non-hidden directory under $HOME to work with snap-confined openstack
 # CLI. Snaps cannot access /tmp, /var/tmp, or hidden directories (~/.foo).
@@ -531,7 +537,12 @@ run_virt_customize() {
 # The libguestfs appliance relies on QEMU user-mode (SLIRP) networking,
 # which provides a built-in DHCP server regardless of the host's LAN.
 # However, the appliance may fail to auto-configure the interface (e.g.
-# missing systemd-network user), so we bring it up explicitly via dhclient.
+# missing systemd-network user), so we bring it up explicitly.
+#
+# We try dhclient first (available on Ubuntu 22.04, Debian 12 and older).
+# If dhclient is missing (Ubuntu 24.04+, Debian 13+), fall back to static
+# IP assignment using the well-known SLIRP defaults (10.0.2.15/24, gw
+# 10.0.2.2, DNS 10.0.2.3).
 #
 # Once SLIRP is up, outbound traffic is NAT-ed through the host, so the
 # proxy IP is reachable from inside the guest.
@@ -539,8 +550,15 @@ _build_guest_net_setup() {
     local family="$1"
     local script=""
 
-    # Bring up SLIRP networking via DHCP
-    script+="ip link set eth0 up && dhclient eth0"
+    # Bring up SLIRP networking — try DHCP, fall back to static.
+    # The SLIRP network uses 10.0.2.0/24 with gateway/DNS at 10.0.2.2.
+    # Note: 'ip route add' may return "File exists" if the appliance already
+    # set a default route — that's fine, so we ignore its exit code.
+    script+="ip link set eth0 up"
+    script+=" && { dhclient eth0 2>/dev/null"
+    script+=" || { ip addr add 10.0.2.15/24 dev eth0 2>/dev/null;"
+    script+=" ip route replace default via 10.0.2.2 2>/dev/null || true;"
+    script+=" echo 'nameserver 10.0.2.2' > /etc/resolv.conf; }; }"
 
     # Inject proxy configuration for the guest's package manager
     if [[ -n "${http_proxy:-}${https_proxy:-}${HTTP_PROXY:-}${HTTPS_PROXY:-}" ]]; then
@@ -595,25 +613,37 @@ customize_image() {
     case "$action" in
         guest-agent)
             msg "Injecting qemu-guest-agent..."
-            local net_setup net_cleanup install_cmd
-            net_setup=$(_build_guest_net_setup "$family")
-            net_cleanup=$(_build_guest_net_cleanup "$family")
 
-            case "$family" in
-                debian|ubuntu)
-                    install_cmd="export DEBIAN_FRONTEND=noninteractive"
-                    install_cmd+=" && apt-get -q -y update"
-                    install_cmd+=" && apt-get -q -y -o Dpkg::Options::=--force-confnew install qemu-guest-agent"
-                    ;;
-                *)
-                    install_cmd="command -v dnf &>/dev/null && dnf -y install qemu-guest-agent"
-                    install_cmd+=" || command -v yum &>/dev/null && yum -y install qemu-guest-agent"
-                    install_cmd+=" || command -v zypper &>/dev/null && zypper -n install qemu-guest-agent"
-                    ;;
-            esac
+            if [[ -n "${http_proxy:-}${https_proxy:-}${HTTP_PROXY:-}${HTTPS_PROXY:-}" ]]; then
+                # Proxy environment detected — use --run-command to inject
+                # proxy configuration into the guest's package manager before
+                # installing. libguestfs's --install does not forward proxy
+                # settings into the SLIRP appliance.
+                local net_setup net_cleanup install_cmd
+                net_setup=$(_build_guest_net_setup "$family")
+                net_cleanup=$(_build_guest_net_cleanup "$family")
 
-            run_virt_customize -a "$image" \
-                --run-command "${net_setup} && ${install_cmd} && ${net_cleanup}"
+                case "$family" in
+                    debian|ubuntu)
+                        install_cmd="export DEBIAN_FRONTEND=noninteractive"
+                        install_cmd+=" && apt-get -q -y update"
+                        install_cmd+=" && apt-get -q -y -o Dpkg::Options::=--force-confnew install qemu-guest-agent"
+                        ;;
+                    *)
+                        install_cmd="command -v dnf &>/dev/null && dnf -y install qemu-guest-agent"
+                        install_cmd+=" || command -v yum &>/dev/null && yum -y install qemu-guest-agent"
+                        install_cmd+=" || command -v zypper &>/dev/null && zypper -n install qemu-guest-agent"
+                        ;;
+                esac
+
+                run_virt_customize -a "$image" \
+                    --run-command "${net_setup} && ${install_cmd} && ${net_cleanup}"
+            else
+                # No proxy — use --install which handles SLIRP networking
+                # internally and works on all distros (including Ubuntu 24.04+
+                # where dhclient was removed).
+                run_virt_customize -a "$image" --install qemu-guest-agent
+            fi
             ;;
         lvm-pvresize)
             msg "Injecting cloud-init pvresize bootcmd..."
