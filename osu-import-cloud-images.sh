@@ -6,7 +6,7 @@
 #
 # Author: Ciro Iriarte <ciro.iriarte+software@gmail.com>
 # Created: 2026-03-12
-# Version: 1.2.1
+# Version: 1.2.2
 #
 # Requirements:
 #   - openstack CLI (python-openstackclient) configured with admin credentials
@@ -16,6 +16,9 @@
 #   - jq
 #
 # Changelog:
+#   - 2026-03-28: v1.2.2 - Move cache dir from /var/tmp to ~/.cache to fix
+#                           Glance upload failures with snap-confined openstack
+#                           CLI (snap cannot access /tmp or /var/tmp).
 #   - 2026-03-27: v1.2.1 - Add xz to dependency checks (required for .xz
 #                           image decompression). Run check_import_deps
 #                           unconditionally so dry-run mode also validates
@@ -43,9 +46,11 @@
 set -euo pipefail
 
 # --- Configuration ---
-SCRIPT_VERSION="1.2.1"
+SCRIPT_VERSION="1.2.2"
 TIMESTAMP=$(date '+%Y%m%d.%H%M')
-CACHE_DIR="/var/tmp/os-cloud-images"
+# Use a non-hidden directory under $HOME to work with snap-confined openstack
+# CLI. Snaps cannot access /tmp, /var/tmp, or hidden directories (~/.foo).
+CACHE_DIR="${HOME}/os-cloud-images"
 MAX_VERSIONS=2
 ARCH="x86_64"
 
