@@ -1,0 +1,247 @@
+.\" Man page for osu-resource-efficiency-report.sh
+.\" Written in classic troff/groff format
+.TH OSU-RESOURCE-EFFICIENCY-REPORT 1 "2026-03-27" "osu-resource-efficiency-report 0.1" "User Commands"
+.SH NAME
+osu-resource-efficiency-report \- report OpenStack resource allocation and efficiency per project
+.SH SYNOPSIS
+.B osu-resource-efficiency-report.sh
+.RB [ \-h | \-\-help ]
+.RB [ \-v | \-\-version ]
+.PP
+.B osu-resource-efficiency-report.sh
+.RB [ \-f | \-\-format
+.IR FMT ]
+.RB [ \-\-no\-diagnostics ]
+.I DOMAIN
+.PP
+.B osu-resource-efficiency-report.sh
+.RB \-p | \-\-project
+.I PROJECT
+.RB [ \-f | \-\-format
+.IR FMT ]
+.RB [ \-\-no\-diagnostics ]
+.PP
+.B osu-resource-efficiency-report.sh
+.RB \-a | \-\-all\-projects
+.RB [ \-f | \-\-format
+.IR FMT ]
+.RB [ \-\-no\-diagnostics ]
+.SH DESCRIPTION
+.B osu-resource-efficiency-report.sh
+reports resource allocation and efficiency for OpenStack instances on a
+per-project basis.
+For each VM it shows assigned vCPU, RAM, root disk (from the flavor), and
+total attached Cinder volume size, alongside real CPU and memory utilisation
+obtained from the Nova diagnostics API.
+.PP
+.B CPU efficiency
+is estimated as average utilisation over the VM's lifetime:
+.IP
+.nf
+cpu% = sum(cpu_time_ns) / (uptime_sec \(mu num_cpus \(mu 1e9) \(mu 100
+.fi
+.PP
+This is a lifetime average derived from cumulative CPU time counters, not a
+real-time snapshot.
+Values near 0% on long-running VMs indicate consistent under-utilisation.
+.PP
+.B Memory efficiency
+uses the hypervisor's balloon-reported usage:
+.IP
+.nf
+ram% = memory_used / memory_maximum \(mu 100
+.fi
+.PP
+.B Important:
+Without the
+.B virtio-balloon
+driver (typically enabled by
+.BR qemu-guest-agent ),
+the hypervisor cannot observe actual guest memory consumption.
+In that case,
+.B used
+always equals
+.B maximum
+(reported as \fB~100%\fR).
+The tilde (\fB~\fR) prefix flags this as unreliable.
+Installing
+.B qemu-guest-agent
+inside the guest VM enables the balloon driver and provides accurate
+memory reporting.
+.PP
+Diagnostics are only available for
+.B ACTIVE
+instances.
+Stopped, shelved, or error-state VMs show \fB\(em\fR for efficiency columns.
+.SH OPTIONS
+.TP
+.BR \-v ", " \-\-version
+Display version information and exit.
+.TP
+.BR \-h ", " \-\-help
+Display usage information and exit.
+.TP
+.BR \-p ", " \-\-project " " \fIPROJECT\fR
+Report a single project (by name or ID).
+.TP
+.BR \-a ", " \-\-all\-projects
+Report across all accessible projects.
+.TP
+.BR \-f ", " \-\-format " " \fIFMT\fR
+Output format:
+.BR table
+(default),
+.BR csv ,
+or
+.BR json .
+Table output goes to stdout with progress on stderr.
+CSV and JSON produce clean structured output on stdout.
+.TP
+.B \-\-no\-diagnostics
+Skip Nova diagnostics queries.
+Produces an allocation-only report (faster, no efficiency columns).
+.TP
+.BR \-n ", " \-\-dry\-run
+Show what would be queried without making API calls.
+.SH OUTPUT FIELDS
+.TP
+.B VM Name
+Instance name (truncated to 22 characters in table mode), or ID if unnamed.
+.TP
+.B Status
+Nova instance state: ACTIVE, SHUTOFF, ERROR, etc.
+.TP
+.B vCPU
+Assigned virtual CPUs from the instance flavor.
+.TP
+.B RAM(M)
+Assigned RAM in MiB from the instance flavor.
+.TP
+.B Disk(G)
+Root disk size in GiB from the instance flavor.
+.TP
+.B vDisk(G)
+Total size of all attached Cinder volumes in GiB.
+.TP
+.B CPU%
+Estimated average CPU utilisation (lifetime, from diagnostics).
+.TP
+.B RAM%
+Balloon-reported memory utilisation.
+Prefixed with \fB~\fR when used equals maximum (no balloon driver detected).
+.TP
+.B Uptime
+VM uptime from diagnostics, displayed in human-readable format.
+.SH EFFICIENCY METRICS
+.SS CPU Utilisation
+The Nova diagnostics API provides cumulative CPU time in nanoseconds per
+virtual CPU.
+Combined with the VM uptime, this yields an average utilisation percentage
+over the VM's entire lifetime.
+.PP
+.B Limitations:
+.IP \(bu 3
+This is a lifetime average, not a real-time snapshot.
+A VM that was idle for 29 days then ran at 100% for 1 day shows ~3%.
+.IP \(bu
+The
+.B qemu-guest-agent
+does NOT improve CPU metrics via diagnostics.
+Real-time CPU utilisation requires Gnocchi/Ceilometer time-series data.
+.SS Memory Utilisation
+The diagnostics API returns
+.B memory_details.maximum
+and
+.B memory_details.used
+(in GiB, from the hypervisor).
+.PP
+.B Without virtio-balloon / qemu-guest-agent:
+.RS
+.B used
+always equals
+.BR maximum .
+The hypervisor has no visibility into guest memory consumption.
+Reported as \fB~100%\fR (tilde indicates unreliable).
+.RE
+.PP
+.B With virtio-balloon / qemu-guest-agent:
+.RS
+.B used
+reflects actual guest memory pressure as reported by the balloon driver.
+This provides meaningful efficiency data.
+.RE
+.SH REQUIREMENTS
+The following commands must be available in
+.BR PATH :
+.PP
+.RS
+.BR openstack (1)
+(python-openstackclient),
+.BR curl (1),
+.BR jq (1)
+.RE
+.PP
+An OpenStack credentials file must be sourced before running the script.
+Admin or domain admin scope is required for cross-project reports.
+.SH EXIT STATUS
+.TP
+.B 0
+Successful execution.
+.TP
+.B 1
+Error: missing dependencies, authentication failure, or invalid arguments.
+.SH EXAMPLES
+Report all projects in a domain:
+.PP
+.RS
+.B osu-resource-efficiency-report.sh my-domain
+.RE
+.PP
+Report a single project:
+.PP
+.RS
+.B osu-resource-efficiency-report.sh -p my-project
+.RE
+.PP
+Report all accessible projects:
+.PP
+.RS
+.B osu-resource-efficiency-report.sh -a
+.RE
+.PP
+CSV output for spreadsheet analysis:
+.PP
+.RS
+.B osu-resource-efficiency-report.sh -f csv my-domain > report.csv
+.RE
+.PP
+Allocation-only report (faster, no diagnostics):
+.PP
+.RS
+.B osu-resource-efficiency-report.sh --no-diagnostics -p my-project
+.RE
+.SH CAVEATS
+.IP \(bu 3
+Diagnostics are only available for ACTIVE instances.
+Stopped VMs show \(em for efficiency columns.
+.IP \(bu
+CPU% is a lifetime average, not real-time.
+For time-series CPU monitoring, use Gnocchi/Ceilometer.
+.IP \(bu
+RAM% is unreliable without virtio-balloon/qemu-guest-agent (flagged with ~).
+.IP \(bu
+The diagnostics API call adds latency per VM.
+For large environments, use
+.B \-\-no\-diagnostics
+for allocation-only reports.
+.IP \(bu
+The token used for diagnostics may expire during long-running reports.
+.SH AUTHORS
+Ciro Iriarte <ciro.iriarte+software@gmail.com>
+.SH SEE ALSO
+.BR openstack (1),
+.BR curl (1),
+.BR jq (1),
+.BR osu-memory-usage-report (1),
+.BR osu-retype-vdisk (1),
+.BR osu-import-cloud-images (1)

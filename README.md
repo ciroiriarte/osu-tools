@@ -14,6 +14,7 @@ A collection of Bash wrappers and tools to simplify OpenStack usage via the open
 - [Scripts](#-scripts)
   - [osu-import-cloud-images.sh](#-osu-import-cloud-imagessh)
   - [osu-memory-usage-report.sh](#-osu-memory-usage-reportsh)
+  - [osu-resource-efficiency-report.sh](#-osu-resource-efficiency-reportsh)
   - [osu-retype-vdisk.sh](#-osu-retype-vdisksh)
 - [Documentation](#-documentation)
 - [Contributing](#-contributing)
@@ -28,6 +29,7 @@ A collection of Bash wrappers and tools to simplify OpenStack usage via the open
 |---|---|---|---|
 | `osu-import-cloud-images.sh` | ![v1.2.1](https://img.shields.io/badge/version-1.2.1-blue) | 2026-03-12 | 2026-03-27 |
 | `osu-memory-usage-report.sh` | ![v0.2](https://img.shields.io/badge/version-0.2-orange) | 2025-12-24 | 2026-03-26 |
+| `osu-resource-efficiency-report.sh` | ![v0.1](https://img.shields.io/badge/version-0.1-orange) | 2026-03-27 | 2026-03-27 |
 | `osu-retype-vdisk.sh` | ![v0.2.0](https://img.shields.io/badge/version-0.2.0-orange) | 2026-03-27 | 2026-03-27 |
 
 All scripts support `--version` / `-v` and `--help` / `-h` flags.
@@ -226,6 +228,69 @@ Provides an accurate summary of OpenStack resources per domain, with a per-proje
 
 # Display help
 ./osu-memory-usage-report.sh --help
+```
+
+---
+
+### 🔍 `osu-resource-efficiency-report.sh`
+
+Reports OpenStack resource allocation and efficiency per project. For each VM, shows assigned vCPU, RAM, root disk, and Cinder volume usage alongside real CPU and memory utilisation from Nova diagnostics. Flags unreliable memory data when the virtio-balloon driver or qemu-guest-agent is absent.
+
+- **Author:** Ciro Iriarte
+- **Created:** 2026-03-27
+- **Updated:** 2026-03-27
+
+#### ⚙️ Requirements
+
+- Required tools:
+  - `openstack` CLI (python-openstackclient)
+  - `curl` (for Nova diagnostics REST API)
+  - `jq`
+- A sourced OpenStack credentials file (e.g., `openrc.sh`)
+- Admin or domain admin scope for cross-project reports
+
+#### ⚠️ Known Limitations
+
+- **CPU% is a lifetime average**, not real-time. Derived from cumulative CPU time counters vs uptime. A VM idle 29 days then busy 1 day shows ~3%. Real-time CPU monitoring requires Gnocchi/Ceilometer.
+- **RAM% requires virtio-balloon / qemu-guest-agent.** Without it, the hypervisor always reports `used == maximum` (shown as `~100%`). Installing `qemu-guest-agent` in the guest enables accurate memory reporting.
+- **Diagnostics only for ACTIVE VMs.** Stopped, shelved, or error-state instances show `—` for efficiency columns.
+
+#### 💡 Recommendations
+
+- Source your OpenStack credentials before running:
+  ```bash
+  source ~/openrc.sh
+  ```
+- Install `qemu-guest-agent` in guest VMs for accurate memory efficiency reporting.
+- Use `--no-diagnostics` for faster allocation-only reports in large environments.
+- Use `--format csv` to export data for spreadsheet analysis.
+
+#### 🚀 Usage
+
+```bash
+# Report all projects in a domain
+./osu-resource-efficiency-report.sh my-domain
+
+# Report a single project
+./osu-resource-efficiency-report.sh -p my-project
+
+# Report all accessible projects
+./osu-resource-efficiency-report.sh -a
+
+# CSV output for spreadsheets
+./osu-resource-efficiency-report.sh -f csv my-domain > report.csv
+
+# JSON output
+./osu-resource-efficiency-report.sh -f json -p my-project
+
+# Allocation-only report (faster, no diagnostics)
+./osu-resource-efficiency-report.sh --no-diagnostics my-domain
+
+# Display version
+./osu-resource-efficiency-report.sh --version
+
+# Display help
+./osu-resource-efficiency-report.sh --help
 ```
 
 ---

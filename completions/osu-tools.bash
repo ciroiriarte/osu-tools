@@ -201,3 +201,50 @@ _osu_retype_vdisk() {
 
 complete -F _osu_retype_vdisk osu-retype-vdisk.sh
 complete -F _osu_retype_vdisk osu-retype-vdisk
+
+# --- osu-resource-efficiency-report.sh ----------------------------------------
+
+_osu_resource_efficiency_report() {
+    local cur prev
+    _osu_comp_init
+
+    case "$prev" in
+        -p|--project)
+            if command -v openstack &>/dev/null; then
+                local projects
+                projects=$(openstack project list -f value -c Name 2>/dev/null)
+                COMPREPLY=( $(compgen -W "$projects" -- "$cur") )
+            fi
+            return
+            ;;
+        -f|--format)
+            COMPREPLY=( $(compgen -W "table csv json" -- "$cur") )
+            return
+            ;;
+    esac
+
+    if [[ "$cur" == --* ]]; then
+        COMPREPLY=( $(compgen -W "
+            --help --version --project --format
+            --all-projects --no-diagnostics --dry-run
+        " -- "$cur") )
+    elif [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "
+            -h -v -p -f -a -n
+            --help --version --project --format
+            --all-projects --no-diagnostics --dry-run
+        " -- "$cur") )
+    else
+        # Positional: domain names
+        if command -v openstack &>/dev/null; then
+            local domains
+            domains=$(openstack domain list -f value -c Name 2>/dev/null)
+            if [[ -n "$domains" ]]; then
+                COMPREPLY=( $(compgen -W "$domains" -- "$cur") )
+            fi
+        fi
+    fi
+}
+
+complete -F _osu_resource_efficiency_report osu-resource-efficiency-report.sh
+complete -F _osu_resource_efficiency_report osu-resource-efficiency-report
