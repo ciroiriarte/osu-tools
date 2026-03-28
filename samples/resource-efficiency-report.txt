@@ -1,0 +1,34 @@
+:: Building nova-compute host map (7 units)
+   [+] Mapped 6 nova-compute host(s)
+:: Resolving project: operations
+   [+] Project: operations (a1b2c3d4-e5f6-7890-abcd-ef1234567890)
+:: Fetching Ceph RBD data for pool: cinder-ceph
+:: Fetching Ceph RBD data for pool: fast-pool
+
+:: Project: operations (a1b2c3d4-e5f6-7890-abcd-ef1234567890)
+  VM Name              Status   Agent  vCPU  RAM(M)  RAM%  CPU%  Load vDisk(G)  RBD(G)  FS%  Uptime
+  ----------------------------------------------------------------------------------------------------------------------------------
+  web-frontend-01      ACTIVE     yes     2    4096 ~100%    9%   —       15     0.5  13%  3m 49s
+                                 /              13.5G  used=1.9G (13%)
+                                 /boot           0.8G  used=0.1G (7%)
+                                 /boot/efi       0.1G  used=0.0G (5%)
+  db-mongodb-01        SHUTOFF    —     2    4096   —   —   —       30     7.1  —  —
+  k8s-controller-01    SHUTOFF    —     2    4096   —   —   —      100     5.3  —  —
+  k8s-controller-02    SHUTOFF    —     2    4096   —   —   —      100     5.3  —  —
+  k8s-controller-03    SHUTOFF    —     2    4096   —   —   —      100     5.5  —  —
+  app-server-01        ACTIVE     —     2    4096 ~100%    0%   —       45    15.5  —  149d 16h
+  dev-workstation-01   SHUTOFF    —     4    4096   —   —   —       60     5.4  —  —
+  db-postgresql-01     ACTIVE      no     2    4096 ~100%    0%   —       40    10.3  —  155d 23h
+  staging-build-01     SHUTOFF    —     2    4096   —   —   —       60     0.5  —  —
+  staging-build-02     SHUTOFF    —     2    4096   —   —   —        3     2.1  —  —
+  test-sandbox-01      SHUTOFF    —     1    2048   —   —   —       20     3.5  —  —
+  ----------------------------------------------------------------------------------------------------------------------------------
+  Totals (11 VMs)                        23   43008                        573
+
+  Legend: CPU%  = recent 5min avg (Gnocchi) or lifetime avg (Nova diagnostics)
+          RAM%  = Gnocchi memory.usage or balloon-reported (~ = no balloon)
+          RBD   = actual Ceph storage used (from rbd du)
+          FS%   = root filesystem usage from guest agent
+          Load  = 1-minute load average from guest agent
+          Agent = yes (responding) / no (not responding) / — (N/A)
+          —     = not available
