@@ -1,6 +1,6 @@
 .\" Man page for osu-retype-vdisk.sh
 .\" Written in classic troff/groff format
-.TH OSU-RETYPE-VDISK 1 "2026-03-27" "osu-retype-vdisk 0.1.4" "User Commands"
+.TH OSU-RETYPE-VDISK 1 "2026-03-27" "osu-retype-vdisk 0.2.0" "User Commands"
 .SH NAME
 osu-retype-vdisk \- retype (migrate) OpenStack volumes between Ceph pools
 .SH SYNOPSIS
@@ -217,6 +217,32 @@ In interactive mode (\fB\-i\fR), if snapshots are detected and no
 .B \-\-handle\-snapshots
 flag was provided, the wizard prompts the user to choose a strategy
 (delete, backup-delete, or skip the affected volumes).
+.SH STOPPED VM HANDLING
+Volumes attached to stopped (SHUTOFF) instances cannot be retyped across
+storage backends because Nova refuses the volume swap on stopped VMs.
+The
+.B \-\-handle\-vm\-state
+option provides two strategies to resolve this:
+.TP
+.BI \-\-handle\-vm\-state " start\-stop"
+Start the VM, perform the retype normally (Nova handles the swap while
+the VM is running), then stop the VM.
+This works for \fBall volumes\fR including root/boot disks.
+The original device path and VM state are preserved.
+.TP
+.BI \-\-handle\-vm\-state " detach\-reattach"
+Detach the volume from the stopped VM, retype it as an available
+(unattached) volume, then reattach it at the original device path
+(e.g.,
+.IR /dev/vdb ).
+This only works for \fBnon-root data volumes\fR \(em root devices
+cannot be detached from a VM.
+The script validates this and rejects boot disks during pre-flight.
+.PP
+In interactive mode (\fB\-i\fR), if a stopped VM is detected and no
+.B \-\-handle\-vm\-state
+flag was provided, the wizard prompts the user to choose a strategy
+(start-stop, detach-reattach, or skip the affected volumes).
 .SH VOLUME SELECTION
 When
 .B \-\-retype
@@ -392,6 +418,18 @@ Retype a volume with snapshots (backup then delete):
 .B osu-retype-vdisk.sh -r VOL_ID -T ssd-pool --handle-snapshots backup-delete --backup-container vol-snap-backups
 .RE
 .PP
+Retype a volume on a stopped VM (start, retype, stop):
+.PP
+.RS
+.B osu-retype-vdisk.sh -r VOL_ID -T ssd-pool --handle-vm-state start-stop
+.RE
+.PP
+Retype a data volume on a stopped VM (detach, retype, reattach):
+.PP
+.RS
+.B osu-retype-vdisk.sh -r VOL_ID -T ssd-pool --handle-vm-state detach-reattach
+.RE
+.PP
 Monitor an in-progress migration:
 .PP
 .RS
@@ -411,10 +449,11 @@ requires data migration between different storage backends (different
 .BR volume_backend_name ),
 Nova refuses the volume swap with HTTP\ 409
 .RI ( "Cannot 'swap_volume' while vm_state stopped" ).
-The pre-flight check detects this and fails early with an actionable
-message.
-Workarounds: start the instance before retyping, or detach the volume
-first.
+Use
+.B \-\-handle\-vm\-state
+to resolve this automatically: \fBstart-stop\fR works for all volumes
+(including boot disks), \fBdetach-reattach\fR works for non-root data
+volumes only.
 Same-backend retypes (type relabeling without data movement) are not
 affected and work regardless of VM state.
 .IP \(bu

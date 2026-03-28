@@ -28,7 +28,7 @@ A collection of Bash wrappers and tools to simplify OpenStack usage via the open
 |---|---|---|---|
 | `osu-import-cloud-images.sh` | ![v1.2.1](https://img.shields.io/badge/version-1.2.1-blue) | 2026-03-12 | 2026-03-27 |
 | `osu-memory-usage-report.sh` | ![v0.2](https://img.shields.io/badge/version-0.2-orange) | 2025-12-24 | 2026-03-26 |
-| `osu-retype-vdisk.sh` | ![v0.1.4](https://img.shields.io/badge/version-0.1.4-orange) | 2026-03-27 | 2026-03-27 |
+| `osu-retype-vdisk.sh` | ![v0.2.0](https://img.shields.io/badge/version-0.2.0-orange) | 2026-03-27 | 2026-03-27 |
 
 All scripts support `--version` / `-v` and `--help` / `-h` flags.
 
@@ -248,7 +248,9 @@ Retypes (migrates) OpenStack Cinder volumes between Ceph pools by changing the v
 
 #### ⚠️ Known Limitations
 
-- **Stopped VMs block cross-backend retypes.** When a volume is attached to a SHUTOFF instance and the retype requires data migration between different storage backends (e.g. `slow` to `fast` pool), Nova refuses the volume swap (`Cannot 'swap_volume' while vm_state stopped`). The pre-flight check detects this and advises starting the instance or detaching the volume first. Same-backend retypes (type relabeling without data movement) work regardless of VM state.
+- **Stopped VMs block cross-backend retypes.** When a volume is attached to a SHUTOFF instance and the retype requires data migration between different storage backends (e.g. `slow` to `fast` pool), Nova refuses the volume swap (`Cannot 'swap_volume' while vm_state stopped`). Use `--handle-vm-state` to resolve this automatically:
+  - `start-stop` — Starts the VM, retypes normally, then stops the VM. Works for **all volumes** including boot disks.
+  - `detach-reattach` — Detaches the volume, retypes it as available, then reattaches at the original device path. **Only for non-root data volumes** (boot disks cannot be detached). In interactive mode, the wizard prompts for a strategy.
 - **Snapshots block retype.** Volumes with snapshots cannot be retyped. Use `--handle-snapshots` to resolve this automatically.
 
 #### 💡 Recommendations
@@ -257,7 +259,7 @@ Retypes (migrates) OpenStack Cinder volumes between Ceph pools by changing the v
   ```bash
   source ~/openrc.sh
   ```
-- **Ensure VMs are running** before retyping their attached volumes across backends. Stopped VMs prevent the volume swap step.
+- For volumes on stopped VMs, use `--handle-vm-state start-stop` (universal) or `--handle-vm-state detach-reattach` (data volumes only) to handle the retype automatically.
 - Plan retype operations during low-usage windows — migration increases I/O latency and network traffic on the Ceph backend.
 - Ensure volumes have no snapshots before retyping. Use `openstack volume snapshot list --volume <VOL_ID>` to check.
 - Use `--dry-run` to preview operations before executing.
@@ -304,6 +306,12 @@ Retypes (migrates) OpenStack Cinder volumes between Ceph pools by changing the v
 
 # Handle snapshots blocking retype (backup then delete)
 ./osu-retype-vdisk.sh -r VOL_ID -T ssd-pool --handle-snapshots backup-delete --backup-container vol-snap-backups
+
+# Handle volumes on stopped VMs (start VM, retype, stop VM)
+./osu-retype-vdisk.sh -r VOL_ID -T ssd-pool --handle-vm-state start-stop
+
+# Handle data volumes on stopped VMs (detach, retype, reattach)
+./osu-retype-vdisk.sh -r VOL_ID -T ssd-pool --handle-vm-state detach-reattach
 
 # Monitor an in-progress migration
 ./osu-retype-vdisk.sh -m VOL_ID

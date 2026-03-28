@@ -8,7 +8,7 @@
 #
 # Author: Ciro Iriarte <ciro.iriarte+software@gmail.com>
 # Created: 2026-03-27
-# Version: 0.1.4
+# Version: 0.2.0
 #
 # Requirements:
 #   - openstack CLI (python-openstackclient)
@@ -16,6 +16,10 @@
 #   - A sourced OpenStack credentials file (e.g., openrc.sh)
 #
 # Changelog:
+#   - 2026-03-27: v0.2.0 - Add --handle-vm-state (start-stop, detach-reattach) to
+#                          resolve stopped-VM retype blocker automatically. Supports
+#                          interactive prompt and one-shot CLI mode. Detach-reattach
+#                          preserves original device path; blocked for boot disks.
 #   - 2026-03-27: v0.1.4 - Add pre-flight check for stopped VMs with cross-backend
 #                          retypes. Nova refuses swap_volume on stopped instances
 #                          (HTTP 409), so the script now detects this early and
@@ -41,7 +45,7 @@
 set -euo pipefail
 
 # --- Configuration ---
-SCRIPT_VERSION="0.1.4"
+SCRIPT_VERSION="0.2.0"
 
 # Operational defaults
 MODE=""
@@ -56,6 +60,7 @@ RETYPE_FLAG=""
 TARGET_TYPE_ARG=""
 HANDLE_SNAPSHOTS=""
 BACKUP_CONTAINER=""
+HANDLE_VM_STATE=""
 declare -a RETYPE_VOLUMES=()
 
 # Counters
@@ -80,6 +85,10 @@ declare -a SELECTED_VOL_IDS=()
 # Snapshot cleanup tracking
 declare -a NEEDS_SNAP_DELETE=()
 declare -A VOL_SNAP_COUNT=()
+
+# VM state handling tracking
+declare -a NEEDS_VM_HANDLE=()
+declare -A VOL_VM_INFO=()    # vol_id -> "server_id|device|vm_state|bootable"
 
 # --- Colors (disabled when stderr is not a terminal) --------------------------
 if [[ -t 2 ]]; then
@@ -172,6 +181,14 @@ Snapshot handling:
                                (required with backup-delete in one-shot mode;
                                prompted interactively in wizard mode)
 
+Stopped VM handling:
+      --handle-vm-state MODE   How to handle volumes on stopped VMs:
+                               start-stop       Start VM, retype, stop VM
+                               detach-reattach  Detach, retype, reattach
+                               (start-stop works for all volumes including boot
+                               disks; detach-reattach only for non-root data
+                               volumes — root devices cannot be detached)
+
 Options:
   -f, --format FMT      Output format: table (default), csv, json
   -y, --yes             Skip confirmation prompts (selects all with --server)
@@ -188,7 +205,7 @@ Pre-flight checks (automatic):
   - Volume has no snapshots (see --handle-snapshots)
   - Target type exists and differs from current type
   - In-use volumes on stopped VMs cannot retype across backends
-    (Nova refuses swap_volume on SHUTOFF instances)
+    (see --handle-vm-state)
 
 Requirements:
   - openstack CLI (python-openstackclient) with valid credentials
@@ -213,6 +230,10 @@ Examples:
   # Handle snapshots blocking retype
   $0 -r VOL_ID -T ssd-pool --handle-snapshots delete
   $0 -r VOL_ID -T ssd-pool --handle-snapshots backup-delete --backup-container my-backups
+
+  # Handle volumes on stopped VMs
+  $0 -r VOL_ID -T ssd-pool --handle-vm-state start-stop
+  $0 -r VOL_ID -T ssd-pool --handle-vm-state detach-reattach
 
   # Listing
   $0 -l                               List all volumes
@@ -618,11 +639,26 @@ preflight_retype() {
         local vm_state
         vm_state=$(get_attached_server_state "$vjson")
         if [[ "$vm_state" == "stopped" ]] && requires_backend_migration "$vol_type" "$target_type"; then
-            local server_id
+            local server_id device bootable
             server_id=$(echo "$vjson" | jq -r '.attachments[0].server_id // "unknown"')
+            device=$(echo "$vjson" | jq -r '.attachments[0].device // ""')
+            bootable=$(echo "$vjson" | jq -r '.bootable // "false"')
+
+            if [[ -n "$HANDLE_VM_STATE" ]]; then
+                # Validate detach-reattach is not used on boot volumes
+                if [[ "$HANDLE_VM_STATE" == "detach-reattach" && "$bootable" == "true" ]]; then
+                    err "Volume '${vol_name}' is a boot disk — cannot use detach-reattach."
+                    err "Use --handle-vm-state start-stop for root volumes."
+                    return 1
+                fi
+                warn "Volume '${vol_name}' is on stopped VM (${server_id:0:13}...) — will ${HANDLE_VM_STATE}"
+                VOL_VM_INFO["$vol_id"]="${server_id}|${device}|${vm_state}|${bootable}"
+                return 4
+            fi
             err "Volume '${vol_name}' is attached to a stopped instance (${server_id})."
             err "Nova cannot swap volumes on stopped VMs. Start the instance first,"
             err "or detach the volume before retyping across backends."
+            err "Hint: use --handle-vm-state start-stop or --handle-vm-state detach-reattach"
             return 1
         fi
     fi
@@ -887,6 +923,243 @@ select_backup_container_interactive() {
     ok "Backup container: ${BACKUP_CONTAINER}"
 }
 
+# --- VM state handling functions -----------------------------------------------
+
+wait_server_status() {
+    local server_id="$1" target_status="$2"
+    local start_time elapsed status
+    local spin_chars='|/-\'
+    local spin_idx=0
+
+    start_time=$(date +%s)
+
+    while true; do
+        local sjson
+        sjson=$(openstack server show "$server_id" -f json 2>/dev/null || echo '{}')
+        status=$(echo "$sjson" | jq -r '.status // "unknown"' | tr '[:upper:]' '[:lower:]')
+
+        elapsed=$(( $(date +%s) - start_time ))
+        local el_str
+        el_str=$(elapsed_human "$elapsed")
+        local spin_char="${spin_chars:spin_idx:1}"
+        spin_idx=$(( (spin_idx + 1) % 4 ))
+
+        printf "\r   [%s] %-8s  server: %-13s  status: %s" \
+            "$spin_char" "$el_str" "${server_id:0:13}" "$status" >&2
+
+        if [[ "$status" == "$target_status" ]]; then
+            printf "\r%-100s\r" "" >&2
+            ok "Server ${server_id:0:13}... is ${target_status} (${el_str})"
+            SERVER_STATE_CACHE["$server_id"]=$(echo "$sjson" | jq -r '."OS-EXT-STS:vm_state" // ""' | tr '[:upper:]' '[:lower:]')
+            return 0
+        fi
+
+        if [[ "$status" == "error" ]]; then
+            printf "\r%-100s\r" "" >&2
+            err "Server ${server_id:0:13}... entered error state"
+            return 1
+        fi
+
+        if (( elapsed >= POLL_TIMEOUT )); then
+            printf "\r%-100s\r" "" >&2
+            warn "Timeout waiting for server ${target_status}"
+            return 1
+        fi
+
+        sleep "$POLL_INTERVAL"
+    done
+}
+
+wait_volume_status() {
+    local vol_id="$1" target_status="$2"
+    local start_time elapsed status
+    local spin_chars='|/-\'
+    local spin_idx=0
+
+    start_time=$(date +%s)
+
+    while true; do
+        local vjson
+        vjson=$(fetch_volume_detail "$vol_id")
+        status=$(echo "$vjson" | jq -r '.status // "unknown"')
+
+        elapsed=$(( $(date +%s) - start_time ))
+        local el_str
+        el_str=$(elapsed_human "$elapsed")
+        local spin_char="${spin_chars:spin_idx:1}"
+        spin_idx=$(( (spin_idx + 1) % 4 ))
+
+        printf "\r   [%s] %-8s  volume: %-13s  status: %s" \
+            "$spin_char" "$el_str" "${vol_id:0:13}" "$status" >&2
+
+        if [[ "$status" == "$target_status" ]]; then
+            printf "\r%-100s\r" "" >&2
+            ok "Volume ${vol_id:0:13}... is ${target_status} (${el_str})"
+            return 0
+        fi
+
+        if [[ "$status" == error* ]]; then
+            printf "\r%-100s\r" "" >&2
+            err "Volume ${vol_id:0:13}... entered ${status} state"
+            return 1
+        fi
+
+        if (( elapsed >= POLL_TIMEOUT )); then
+            printf "\r%-100s\r" "" >&2
+            warn "Timeout waiting for volume ${target_status}"
+            return 1
+        fi
+
+        sleep "$POLL_INTERVAL"
+    done
+}
+
+handle_vm_state_pre() {
+    if (( ${#NEEDS_VM_HANDLE[@]} == 0 )); then
+        return 0
+    fi
+
+    msg "Handling stopped VM state (pre-retype)..."
+
+    declare -A _vm_failed=()
+    local vol_id info server_id device vm_state bootable
+
+    if [[ "$HANDLE_VM_STATE" == "detach-reattach" ]]; then
+        for vol_id in "${NEEDS_VM_HANDLE[@]}"; do
+            info="${VOL_VM_INFO[$vol_id]}"
+            IFS='|' read -r server_id device vm_state bootable <<< "$info"
+
+            local vjson vol_name
+            vjson=$(fetch_volume_detail "$vol_id")
+            vol_name=$(echo "$vjson" | jq -r 'if (.name // "") == "" then .id else .name end')
+
+            msg "Detaching ${vol_name} from ${server_id:0:13}... (device: ${device})"
+            if ! run openstack server remove volume "$server_id" "$vol_id"; then
+                err "Detach failed for ${vol_name}"
+                _vm_failed["$vol_id"]=1
+                (( RETYPE_FAIL++ )) || true
+                continue
+            fi
+            if (( ! DRY_RUN )); then
+                if ! wait_volume_status "$vol_id" "available"; then
+                    err "Volume ${vol_name} did not reach available state after detach"
+                    _vm_failed["$vol_id"]=1
+                    (( RETYPE_FAIL++ )) || true
+                    continue
+                fi
+            fi
+            ok "Detached ${vol_name}"
+        done
+    elif [[ "$HANDLE_VM_STATE" == "start-stop" ]]; then
+        # Group by server_id to start each VM only once
+        declare -A _servers_to_start=()
+        for vol_id in "${NEEDS_VM_HANDLE[@]}"; do
+            IFS='|' read -r server_id _ _ _ <<< "${VOL_VM_INFO[$vol_id]}"
+            _servers_to_start["$server_id"]=1
+        done
+
+        for server_id in "${!_servers_to_start[@]}"; do
+            msg "Starting server ${server_id:0:13}..."
+            if ! run openstack server start "$server_id"; then
+                err "Failed to start server ${server_id}"
+                for vol_id in "${NEEDS_VM_HANDLE[@]}"; do
+                    local _sid
+                    IFS='|' read -r _sid _ _ _ <<< "${VOL_VM_INFO[$vol_id]}"
+                    if [[ "$_sid" == "$server_id" ]]; then
+                        _vm_failed["$vol_id"]=1
+                        (( RETYPE_FAIL++ )) || true
+                    fi
+                done
+                continue
+            fi
+            if (( ! DRY_RUN )); then
+                if ! wait_server_status "$server_id" "active"; then
+                    err "Server ${server_id} did not reach ACTIVE state"
+                    for vol_id in "${NEEDS_VM_HANDLE[@]}"; do
+                        local _sid
+                        IFS='|' read -r _sid _ _ _ <<< "${VOL_VM_INFO[$vol_id]}"
+                        if [[ "$_sid" == "$server_id" ]]; then
+                            _vm_failed["$vol_id"]=1
+                            (( RETYPE_FAIL++ )) || true
+                        fi
+                    done
+                    continue
+                fi
+            fi
+        done
+    fi
+
+    # Remove failed volumes from VALID_VOLS and NEEDS_VM_HANDLE
+    if (( ${#_vm_failed[@]} > 0 )); then
+        local _cleaned=() _cleaned_vm=() _v
+        for _v in "${VALID_VOLS[@]}"; do
+            [[ -z "${_vm_failed[$_v]:-}" ]] && _cleaned+=("$_v")
+        done
+        VALID_VOLS=("${_cleaned[@]}")
+        for _v in "${NEEDS_VM_HANDLE[@]}"; do
+            [[ -z "${_vm_failed[$_v]:-}" ]] && _cleaned_vm+=("$_v")
+        done
+        NEEDS_VM_HANDLE=("${_cleaned_vm[@]}")
+    fi
+}
+
+handle_vm_state_post() {
+    if (( ${#NEEDS_VM_HANDLE[@]} == 0 )); then
+        return 0
+    fi
+
+    msg "Handling stopped VM state (post-retype)..."
+
+    local vol_id info server_id device vm_state bootable
+
+    if [[ "$HANDLE_VM_STATE" == "detach-reattach" ]]; then
+        for vol_id in "${NEEDS_VM_HANDLE[@]}"; do
+            info="${VOL_VM_INFO[$vol_id]}"
+            IFS='|' read -r server_id device vm_state bootable <<< "$info"
+
+            local vjson vol_name
+            vjson=$(fetch_volume_detail "$vol_id")
+            vol_name=$(echo "$vjson" | jq -r 'if (.name // "") == "" then .id else .name end')
+
+            msg "Reattaching ${vol_name} to ${server_id:0:13}... at ${device}"
+            if ! run openstack server add volume "$server_id" "$vol_id" --device "$device"; then
+                err "Reattach failed for ${vol_name} — manual reattach needed:"
+                err "  openstack server add volume ${server_id} ${vol_id} --device ${device}"
+                continue
+            fi
+            if (( ! DRY_RUN )); then
+                if ! wait_volume_status "$vol_id" "in-use"; then
+                    warn "Volume ${vol_name} did not reach in-use state after reattach"
+                    continue
+                fi
+            fi
+            ok "Reattached ${vol_name} at ${device}"
+        done
+    elif [[ "$HANDLE_VM_STATE" == "start-stop" ]]; then
+        # Stop each unique server that was started
+        declare -A _servers_to_stop=()
+        for vol_id in "${NEEDS_VM_HANDLE[@]}"; do
+            IFS='|' read -r server_id _ _ _ <<< "${VOL_VM_INFO[$vol_id]}"
+            _servers_to_stop["$server_id"]=1
+        done
+
+        for server_id in "${!_servers_to_stop[@]}"; do
+            msg "Stopping server ${server_id:0:13}..."
+            if ! run openstack server stop "$server_id"; then
+                err "Failed to stop server ${server_id} — manual stop needed"
+                continue
+            fi
+            if (( ! DRY_RUN )); then
+                if ! wait_server_status "$server_id" "shutoff"; then
+                    warn "Server ${server_id} did not reach SHUTOFF state"
+                    continue
+                fi
+            fi
+            ok "Server ${server_id:0:13}... stopped"
+        done
+    fi
+}
+
 # --- Monitoring ---------------------------------------------------------------
 
 monitor_volume() {
@@ -1024,6 +1297,19 @@ confirm_prompt() {
         if [[ "$HANDLE_SNAPSHOTS" == "backup-delete" ]]; then
             echo "   Backup container: ${BACKUP_CONTAINER}" >&2
         fi
+    fi
+
+    # Show VM state handling warnings
+    if (( ${#NEEDS_VM_HANDLE[@]} > 0 )); then
+        echo "" >&2
+        echo "   VM state handling (${HANDLE_VM_STATE}):" >&2
+        local _vv _vn _vi _sid _dev _bflag
+        for _vv in "${NEEDS_VM_HANDLE[@]}"; do
+            _vn=$(echo "$(fetch_volume_detail "$_vv")" | jq -r 'if (.name // "") == "" then .id else .name end')
+            IFS='|' read -r _sid _dev _ _bflag <<< "${VOL_VM_INFO[$_vv]}"
+            printf "     %-36s  %-22s  server: %s  device: %s\n" \
+                "$_vv" "${_vn:0:22}" "${_sid:0:13}" "$_dev" >&2
+        done
     fi
 
     echo "" >&2
@@ -1183,6 +1469,7 @@ run_preflight() {
     msg "Running pre-flight checks..."
     VALID_VOLS=()
     NEEDS_SNAP_DELETE=()
+    NEEDS_VM_HANDLE=()
     local vid pf_rc
     for vid in "${vol_ids[@]}"; do
         pf_rc=0
@@ -1192,6 +1479,9 @@ run_preflight() {
         elif (( pf_rc == 3 )); then
             VALID_VOLS+=("$vid")
             NEEDS_SNAP_DELETE+=("$vid")
+        elif (( pf_rc == 4 )); then
+            VALID_VOLS+=("$vid")
+            NEEDS_VM_HANDLE+=("$vid")
         elif (( pf_rc == 2 )); then
             (( RETYPE_SKIP++ )) || true
         else
@@ -1315,8 +1605,9 @@ interactive_mode() {
     ok "Target type: ${target_type}"
 
     # Step 3: Pre-flight checks
-    # Allow snapshots to be detected (resolved interactively below)
+    # Allow snapshots and stopped VMs to be detected (resolved interactively below)
     [[ -z "$HANDLE_SNAPSHOTS" ]] && HANDLE_SNAPSHOTS="ask"
+    [[ -z "$HANDLE_VM_STATE" ]] && HANDLE_VM_STATE="ask"
 
     echo "" >&2
     msg "Step 3: Pre-flight checks"
@@ -1379,6 +1670,70 @@ interactive_mode() {
         esac
     fi
 
+    # Step 3c: Handle stopped VMs interactively
+    if (( ${#NEEDS_VM_HANDLE[@]} > 0 )) && [[ "$HANDLE_VM_STATE" == "ask" ]]; then
+        echo "" >&2
+        msg "Some volumes are attached to stopped VMs (cross-backend retype blocked):"
+        local _vv _vn _vi _sid _dev _bflag
+        for _vv in "${NEEDS_VM_HANDLE[@]}"; do
+            _vn=$(echo "$(fetch_volume_detail "$_vv")" | jq -r 'if (.name // "") == "" then .id else .name end')
+            IFS='|' read -r _sid _dev _ _bflag <<< "${VOL_VM_INFO[$_vv]}"
+            local _boot_note=""
+            [[ "$_bflag" == "true" ]] && _boot_note=" [boot disk]"
+            echo "     ${_vn} — server ${_sid:0:13}... device ${_dev}${_boot_note}" >&2
+        done
+        echo "" >&2
+        echo "   How to handle stopped VMs?" >&2
+        echo "   1) start-stop       — Start VM, retype, stop VM (works for all volumes)" >&2
+        echo "   2) detach-reattach  — Detach, retype as available, reattach (data volumes only)" >&2
+        echo "   3) skip             — Skip these volumes" >&2
+        echo "" >&2
+
+        local vm_choice
+        read -rp "   Select [1-3]: " vm_choice
+        case "$vm_choice" in
+            1)
+                HANDLE_VM_STATE="start-stop"
+                ;;
+            2)
+                HANDLE_VM_STATE="detach-reattach"
+                # Validate no boot disks in the set
+                local _has_boot=0
+                for _vv in "${NEEDS_VM_HANDLE[@]}"; do
+                    IFS='|' read -r _ _ _ _bflag <<< "${VOL_VM_INFO[$_vv]}"
+                    if [[ "$_bflag" == "true" ]]; then
+                        _has_boot=1
+                        _vn=$(echo "$(fetch_volume_detail "$_vv")" | jq -r 'if (.name // "") == "" then .id else .name end')
+                        err "Volume ${_vn} is a boot disk — cannot detach-reattach."
+                    fi
+                done
+                if (( _has_boot )); then
+                    err "Switch to start-stop or skip boot disk volumes."
+                    exit 1
+                fi
+                ;;
+            *)
+                HANDLE_VM_STATE=""
+                declare -A _skip_vm=()
+                for _vv in "${NEEDS_VM_HANDLE[@]}"; do
+                    _skip_vm["$_vv"]=1
+                    (( RETYPE_SKIP++ )) || true
+                done
+                local _cleaned=()
+                local _cv
+                for _cv in "${VALID_VOLS[@]}"; do
+                    [[ -z "${_skip_vm[$_cv]:-}" ]] && _cleaned+=("$_cv")
+                done
+                VALID_VOLS=("${_cleaned[@]}")
+                NEEDS_VM_HANDLE=()
+                if (( ${#VALID_VOLS[@]} == 0 )); then
+                    err "No volumes eligible for retype."
+                    exit 1
+                fi
+                ;;
+        esac
+    fi
+
     # Step 4: Confirm and execute
     echo "" >&2
     msg "Step 4: Confirm and execute"
@@ -1392,7 +1747,15 @@ interactive_mode() {
         exit 1
     fi
 
+    handle_vm_state_pre
+    if (( ${#VALID_VOLS[@]} == 0 )); then
+        err "No volumes remaining after VM state handling."
+        exit 1
+    fi
+
     execute_retype_batch "$target_type" "${VALID_VOLS[@]}"
+
+    handle_vm_state_post
 
     if (( RETYPE_FAIL > 0 )); then
         exit 1
@@ -1401,7 +1764,7 @@ interactive_mode() {
 
 # --- Argument Parsing ---------------------------------------------------------
 OPTIONS=$(getopt -o hvilr:T:tmns:f:y \
-    --long help,version,interactive,list,retype:,type:,types,monitor,dry-run,server:,format:,yes,no-monitor,interval:,timeout:,handle-snapshots:,backup-container: \
+    --long help,version,interactive,list,retype:,type:,types,monitor,dry-run,server:,format:,yes,no-monitor,interval:,timeout:,handle-snapshots:,backup-container:,handle-vm-state: \
     -n "$0" -- "$@")
 if [[ $? -ne 0 ]]; then
     echo "Failed to parse options." >&2
@@ -1480,6 +1843,10 @@ while true; do
             BACKUP_CONTAINER="$2"
             shift 2
             ;;
+        --handle-vm-state)
+            HANDLE_VM_STATE="$2"
+            shift 2
+            ;;
         --)
             shift
             break
@@ -1545,6 +1912,13 @@ if [[ -n "$HANDLE_SNAPSHOTS" && "$HANDLE_SNAPSHOTS" != "ask" ]]; then
         err "--backup-container is required with --handle-snapshots backup-delete"
         exit 1
     fi
+fi
+
+if [[ -n "$HANDLE_VM_STATE" && "$HANDLE_VM_STATE" != "ask" ]]; then
+    case "$HANDLE_VM_STATE" in
+        start-stop|detach-reattach) ;;
+        *) err "Invalid --handle-vm-state mode '${HANDLE_VM_STATE}'. Use: start-stop, detach-reattach"; exit 1 ;;
+    esac
 fi
 
 case "$MODE" in
@@ -1648,8 +2022,18 @@ case "$MODE" in
             exit 1
         fi
 
+        # VM state handling (pre-retype)
+        handle_vm_state_pre
+        if (( ${#VALID_VOLS[@]} == 0 )); then
+            err "No volumes remaining after VM state handling."
+            exit 1
+        fi
+
         # Execute
         execute_retype_batch "$TARGET_TYPE" "${VALID_VOLS[@]}"
+
+        # VM state handling (post-retype)
+        handle_vm_state_post
 
         if (( RETYPE_FAIL > 0 )); then
             exit 1
