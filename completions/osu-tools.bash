@@ -226,13 +226,13 @@ _osu_resource_efficiency_report() {
     if [[ "$cur" == --* ]]; then
         COMPREPLY=( $(compgen -W "
             --help --version --project --format
-            --all-projects --no-diagnostics --dry-run
+            --no-diagnostics --no-ceph --no-agent --dry-run
         " -- "$cur") )
     elif [[ "$cur" == -* ]]; then
         COMPREPLY=( $(compgen -W "
-            -h -v -p -f -a -n
+            -h -v -p -f -n
             --help --version --project --format
-            --all-projects --no-diagnostics --dry-run
+            --no-diagnostics --no-ceph --no-agent --dry-run
         " -- "$cur") )
     else
         # Positional: domain names

@@ -36,13 +36,12 @@
 set -euo pipefail
 
 # --- Configuration ---
-SCRIPT_VERSION="0.2.0"
+SCRIPT_VERSION="0.3.0"
 
 # Operational defaults
 OUTPUT_FORMAT="table"
 PROJECT_FILTER=""
 DOMAIN_FILTER=""
-ALL_PROJECTS=0
 NO_DIAGNOSTICS=0
 NO_CEPH=0
 NO_AGENT=0
@@ -131,10 +130,10 @@ Description:
   Guest-agent data (filesystem usage, load) is queried via juju ssh to
   nova-compute units using virsh qemu-agent-command.
 
-Modes:
-  DOMAIN                  Report all projects in the given domain
-  -p, --project PROJECT   Report a single project (by name or ID)
-  -a, --all-projects      Report across all accessible projects
+Scope:
+  (default)               Report all projects across all accessible domains
+  DOMAIN                  Limit to projects in the given domain
+  -p, --project PROJECT   Limit to a single project (by name or ID)
 
 Options:
   -f, --format FMT        Output format: table (default), csv, json
@@ -171,14 +170,14 @@ Optional:
   - juju (for Ceph RBD storage and guest-agent queries)
 
 Examples:
-  # Report all projects in a domain
+  # Report all domains and projects (default)
+  $0
+
+  # Report all projects in a specific domain
   $0 my-domain
 
   # Report a single project
   $0 -p my-project
-
-  # All accessible projects
-  $0 -a
 
   # CSV output (for spreadsheets/scripts)
   $0 -f csv my-domain
@@ -983,8 +982,8 @@ report_project() {
 
 # --- Argument parsing ---------------------------------------------------------
 
-OPTIONS=$(getopt -o hvp:f:an \
-    --long help,version,project:,format:,all-projects,no-diagnostics,no-ceph,no-agent,dry-run \
+OPTIONS=$(getopt -o hvp:f:n \
+    --long help,version,project:,format:,no-diagnostics,no-ceph,no-agent,dry-run \
     -n "$0" -- "$@")
 if [[ $? -ne 0 ]]; then
     echo "Failed to parse options." >&2
@@ -1010,10 +1009,6 @@ while true; do
         -f|--format)
             OUTPUT_FORMAT="$2"
             shift 2
-            ;;
-        -a|--all-projects)
-            ALL_PROJECTS=1
-            shift
             ;;
         --no-diagnostics)
             NO_DIAGNOSTICS=1
@@ -1052,11 +1047,7 @@ case "$OUTPUT_FORMAT" in
     *) err "Invalid format '${OUTPUT_FORMAT}'. Use: table, csv, json"; exit 1 ;;
 esac
 
-# Must specify at least one scope
-if [[ -z "$PROJECT_FILTER" && -z "$DOMAIN_FILTER" ]] && (( ! ALL_PROJECTS )); then
-    show_help >&2
-    exit 1
-fi
+# No validation needed — default (no args) reports all domains
 
 # --- Main execution -----------------------------------------------------------
 
@@ -1065,11 +1056,11 @@ check_deps
 if (( DRY_RUN )); then
     msg "Dry run — would query:"
     if [[ -n "$PROJECT_FILTER" ]]; then
-        echo "  Project: ${PROJECT_FILTER}" >&2
+        echo "  Scope: project ${PROJECT_FILTER}" >&2
     elif [[ -n "$DOMAIN_FILTER" ]]; then
-        echo "  Domain: ${DOMAIN_FILTER} (all projects)" >&2
+        echo "  Scope: domain ${DOMAIN_FILTER} (all projects)" >&2
     else
-        echo "  All accessible projects" >&2
+        echo "  Scope: all domains and projects" >&2
     fi
     echo "  Diagnostics: $(( ! NO_DIAGNOSTICS ? 1 : 0 ))" >&2
     echo "  Ceph RBD:    $(( ! NO_CEPH ? 1 : 0 ))" >&2
@@ -1141,24 +1132,43 @@ elif [[ -n "$DOMAIN_FILTER" ]]; then
         done < <(echo "$PROJECTS_JSON" | jq -c '.[]')
     fi
 
-elif (( ALL_PROJECTS )); then
-    # All accessible projects
-    msg "Fetching all accessible projects"
-    PROJECTS_JSON=$(openstack project list -f json 2>/dev/null || echo '[]')
-    PROJ_COUNT=$(echo "$PROJECTS_JSON" | jq 'length')
-    ok "Found ${PROJ_COUNT} project(s)"
+else
+    # Default: iterate all accessible domains and their projects
+    msg "Fetching accessible domains"
+    DOMAINS_JSON=$(openstack domain list -f json 2>/dev/null || echo '[]')
+    DOM_COUNT=$(echo "$DOMAINS_JSON" | jq 'length')
+    ok "Found ${DOM_COUNT} domain(s)"
 
-    if (( PROJ_COUNT == 0 )); then
-        warn "No accessible projects."
+    if (( DOM_COUNT == 0 )); then
+        warn "No accessible domains."
     else
-        PIDX=0
-        while IFS= read -r pline; do
-            (( PIDX++ )) || true
-            PID_CUR=$(echo "$pline" | jq -r '.ID')
-            PNAME_CUR=$(echo "$pline" | jq -r '.Name')
-            msg "[${PIDX}/${PROJ_COUNT}] ${PNAME_CUR}"
-            run_report_for_project "$PID_CUR" "$PNAME_CUR"
-        done < <(echo "$PROJECTS_JSON" | jq -c '.[]')
+        DIDX=0
+        while IFS= read -r dline; do
+            (( DIDX++ )) || true
+            DOM_ID=$(echo "$dline" | jq -r '.ID')
+            DOM_NAME=$(echo "$dline" | jq -r '.Name')
+
+            PROJECTS_JSON=$(openstack project list --domain "$DOM_NAME" -f json 2>/dev/null || echo '[]')
+            PROJ_COUNT=$(echo "$PROJECTS_JSON" | jq 'length')
+
+            if (( PROJ_COUNT == 0 )); then
+                continue
+            fi
+
+            if [[ "$OUTPUT_FORMAT" == "table" ]]; then
+                echo "" >&2
+                msg "Domain: ${DOM_NAME} (${PROJ_COUNT} project(s))"
+            fi
+
+            PIDX=0
+            while IFS= read -r pline; do
+                (( PIDX++ )) || true
+                PID_CUR=$(echo "$pline" | jq -r '.ID')
+                PNAME_CUR=$(echo "$pline" | jq -r '.Name')
+                msg "[${DIDX}/${DOM_COUNT}] ${DOM_NAME} / ${PNAME_CUR}"
+                run_report_for_project "$PID_CUR" "$PNAME_CUR"
+            done < <(echo "$PROJECTS_JSON" | jq -c '.[]')
+        done < <(echo "$DOMAINS_JSON" | jq -c '.[]')
     fi
 fi
 
