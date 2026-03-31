@@ -14,7 +14,7 @@ A collection of Bash wrappers and tools to simplify OpenStack usage via the open
 - [Scripts](#-scripts)
   - [osu-import-cloud-images.sh](#-osu-import-cloud-imagessh)
   - [osu-memory-usage-report.sh](#-osu-memory-usage-reportsh)
-  - [osu-resource-efficiency-report.sh](#-osu-resource-efficiency-reportsh)
+  - [osu-capacity-report.sh](#-osu-capacity-reportsh)
   - [osu-retype-vdisk.sh](#-osu-retype-vdisksh)
 - [Documentation](#-documentation)
 - [Contributing](#-contributing)
@@ -29,7 +29,7 @@ A collection of Bash wrappers and tools to simplify OpenStack usage via the open
 |---|---|---|---|
 | `osu-import-cloud-images.sh` | ![v1.2.1](https://img.shields.io/badge/version-1.2.1-blue) | 2026-03-12 | 2026-03-27 |
 | `osu-memory-usage-report.sh` | ![v0.2](https://img.shields.io/badge/version-0.2-orange) | 2025-12-24 | 2026-03-26 |
-| `osu-resource-efficiency-report.sh` | ![v0.1](https://img.shields.io/badge/version-0.1-orange) | 2026-03-27 | 2026-03-27 |
+| `osu-capacity-report.sh` | ![v0.1](https://img.shields.io/badge/version-0.1-orange) | 2026-03-27 | 2026-03-27 |
 | `osu-retype-vdisk.sh` | ![v0.2.0](https://img.shields.io/badge/version-0.2.0-orange) | 2026-03-27 | 2026-03-27 |
 
 All scripts support `--version` / `-v` and `--help` / `-h` flags.
@@ -232,7 +232,7 @@ Provides an accurate summary of OpenStack resources per domain, with a per-proje
 
 ---
 
-### 🔍 `osu-resource-efficiency-report.sh`
+### 🔍 `osu-capacity-report.sh`
 
 Reports OpenStack resource allocation and efficiency per project. For each VM, shows assigned vCPU, RAM, root disk, and Cinder volume usage alongside real CPU and memory utilisation from Nova diagnostics. Flags unreliable memory data when the virtio-balloon driver or qemu-guest-agent is absent.
 
@@ -269,28 +269,28 @@ Reports OpenStack resource allocation and efficiency per project. For each VM, s
 
 ```bash
 # Report all projects in a domain
-./osu-resource-efficiency-report.sh my-domain
+./osu-capacity-report.sh my-domain
 
 # Report a single project
-./osu-resource-efficiency-report.sh -p my-project
+./osu-capacity-report.sh -p my-project
 
 # Report all accessible projects
-./osu-resource-efficiency-report.sh -a
+./osu-capacity-report.sh -a
 
 # CSV output for spreadsheets
-./osu-resource-efficiency-report.sh -f csv my-domain > report.csv
+./osu-capacity-report.sh -f csv my-domain > report.csv
 
 # JSON output
-./osu-resource-efficiency-report.sh -f json -p my-project
+./osu-capacity-report.sh -f json -p my-project
 
 # Allocation-only report (faster, no diagnostics)
-./osu-resource-efficiency-report.sh --no-diagnostics my-domain
+./osu-capacity-report.sh --no-diagnostics my-domain
 
 # Display version
-./osu-resource-efficiency-report.sh --version
+./osu-capacity-report.sh --version
 
 # Display help
-./osu-resource-efficiency-report.sh --help
+./osu-capacity-report.sh --help
 ```
 
 ---

@@ -1,33 +1,33 @@
-.\" Man page for osu-resource-efficiency-report.sh
+.\" Man page for osu-capacity-report.sh
 .\" Written in classic troff/groff format
-.TH OSU-RESOURCE-EFFICIENCY-REPORT 1 "2026-03-27" "osu-resource-efficiency-report 0.1" "User Commands"
+.TH OSU-CAPACITY-REPORT 1 "2026-03-27" "osu-capacity-report 0.1" "User Commands"
 .SH NAME
-osu-resource-efficiency-report \- report OpenStack resource allocation and efficiency per project
+osu-capacity-report \- report OpenStack resource allocation and efficiency per project
 .SH SYNOPSIS
-.B osu-resource-efficiency-report.sh
+.B osu-capacity-report.sh
 .RB [ \-h | \-\-help ]
 .RB [ \-v | \-\-version ]
 .PP
-.B osu-resource-efficiency-report.sh
+.B osu-capacity-report.sh
 .RB [ \-f | \-\-format
 .IR FMT ]
 .RB [ \-\-no\-diagnostics ]
 .I DOMAIN
 .PP
-.B osu-resource-efficiency-report.sh
+.B osu-capacity-report.sh
 .RB \-p | \-\-project
 .I PROJECT
 .RB [ \-f | \-\-format
 .IR FMT ]
 .RB [ \-\-no\-diagnostics ]
 .PP
-.B osu-resource-efficiency-report.sh
+.B osu-capacity-report.sh
 .RB \-a | \-\-all\-projects
 .RB [ \-f | \-\-format
 .IR FMT ]
 .RB [ \-\-no\-diagnostics ]
 .SH DESCRIPTION
-.B osu-resource-efficiency-report.sh
+.B osu-capacity-report.sh
 reports resource allocation and efficiency for OpenStack instances on a
 per-project basis.
 For each VM it shows assigned vCPU, RAM, root disk (from the flavor), and
@@ -194,31 +194,31 @@ Error: missing dependencies, authentication failure, or invalid arguments.
 Report all projects in a domain:
 .PP
 .RS
-.B osu-resource-efficiency-report.sh my-domain
+.B osu-capacity-report.sh my-domain
 .RE
 .PP
 Report a single project:
 .PP
 .RS
-.B osu-resource-efficiency-report.sh -p my-project
+.B osu-capacity-report.sh -p my-project
 .RE
 .PP
 Report all accessible projects:
 .PP
 .RS
-.B osu-resource-efficiency-report.sh -a
+.B osu-capacity-report.sh -a
 .RE
 .PP
 CSV output for spreadsheet analysis:
 .PP
 .RS
-.B osu-resource-efficiency-report.sh -f csv my-domain > report.csv
+.B osu-capacity-report.sh -f csv my-domain > report.csv
 .RE
 .PP
 Allocation-only report (faster, no diagnostics):
 .PP
 .RS
-.B osu-resource-efficiency-report.sh --no-diagnostics -p my-project
+.B osu-capacity-report.sh --no-diagnostics -p my-project
 .RE
 .SH CAVEATS
 .IP \(bu 3

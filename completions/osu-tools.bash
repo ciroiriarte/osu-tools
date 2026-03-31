@@ -202,9 +202,9 @@ _osu_retype_vdisk() {
 complete -F _osu_retype_vdisk osu-retype-vdisk.sh
 complete -F _osu_retype_vdisk osu-retype-vdisk
 
-# --- osu-resource-efficiency-report.sh ----------------------------------------
+# --- osu-capacity-report.sh ----------------------------------------
 
-_osu_resource_efficiency_report() {
+_osu_capacity_report() {
     local cur prev
     _osu_comp_init
 
@@ -246,5 +246,5 @@ _osu_resource_efficiency_report() {
     fi
 }
 
-complete -F _osu_resource_efficiency_report osu-resource-efficiency-report.sh
-complete -F _osu_resource_efficiency_report osu-resource-efficiency-report
+complete -F _osu_capacity_report osu-capacity-report.sh
+complete -F _osu_capacity_report osu-capacity-report

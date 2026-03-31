@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Script Name: osu-resource-efficiency-report.sh
+# Script Name: osu-capacity-report.sh
 # Description: Reports OpenStack resource allocation and efficiency per project.
 #              Shows each VM's assigned vCPU, RAM, root disk, and Cinder volume
 #              usage alongside real CPU and memory utilisation from Gnocchi
