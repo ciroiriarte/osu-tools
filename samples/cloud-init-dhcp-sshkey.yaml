@@ -1,0 +1,58 @@
+#cloud-config
+# ──────────────────────────────────────────────────────────────────────────────
+# Network:  DHCP (cloud-init lets the distro DHCP client run — default)
+# Auth:     SSH public key
+# User:     cloudadmin with passwordless sudo
+#
+# Usage:
+#   openstack server create \
+#     --image    ci-ubuntu-2404-x86-64-20260413.1000 \
+#     --flavor   m1.small \
+#     --network  my-network \
+#     --security-group ssh-access \
+#     --key-name my-key \
+#     --user-data cloud-init-dhcp-sshkey.yaml \
+#     vm-dhcp-sshkey
+#
+#   ssh -i ~/.ssh/id_ed25519 cloudadmin@<IP>
+# ──────────────────────────────────────────────────────────────────────────────
+
+# ── Users ─────────────────────────────────────────────────────────────────────
+users:
+  # 'default' preserves the distro admin user (ubuntu, debian, rocky, etc.)
+  # as a fallback. Remove if not needed.
+  - default
+  - name: cloudadmin
+    gecos: Cloud Administrator
+    # 'sudo'  grants sudo on Debian / Ubuntu
+    # 'wheel' grants sudo on Rocky / Oracle / openSUSE
+    # cloud-init silently ignores groups that do not exist on the target distro
+    groups: [sudo, wheel]
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    shell: /bin/bash
+    lock_passwd: true
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIReplaceThisWithYourActualPublicKeyContent user@workstation
+
+# ── Network — DHCP (explicit for clarity) ─────────────────────────────────────
+network:
+  version: 2
+  ethernets:
+    ens3:
+      # ens3 is the typical interface name on q35/virtio-net VMs.
+      # Rocky Linux and Oracle Linux cloud images commonly use eth0 instead.
+      dhcp4: true
+      dhcp6: false
+
+# ── System ────────────────────────────────────────────────────────────────────
+# Hostname is set from the OpenStack instance name via the metadata service.
+# Do NOT set 'hostname:' or 'fqdn:' here — let the platform provide it.
+package_update: true
+package_upgrade: false
+
+timezone: UTC
+
+# ── Final message (visible in console log) ────────────────────────────────────
+final_message: |
+  cloud-init completed in $UPTIME seconds.
+  Connect: ssh cloudadmin@<IP>

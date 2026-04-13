@@ -13,6 +13,7 @@ A collection of Bash wrappers and tools to simplify OpenStack usage via the open
 - [Getting Started](#-getting-started)
 - [Scripts](#-scripts)
   - [osu-import-cloud-images.sh](#-osu-import-cloud-imagessh)
+  - [Cloud Images Provisioning Guide](#-cloud-images-provisioning-guide)
   - [osu-memory-usage-report.sh](#-osu-memory-usage-reportsh)
   - [osu-capacity-report.sh](#-osu-capacity-reportsh)
   - [osu-retype-vdisk.sh](#-osu-retype-vdisksh)
@@ -190,6 +191,35 @@ export http_proxy=http://proxy:3128 https_proxy=http://proxy:3128
 export no_proxy=localhost,127.0.0.1,.internal.lan
 ./osu-import-cloud-images.sh -b -d debian
 ```
+
+---
+
+### 📖 Cloud Images Provisioning Guide
+
+Step-by-step procedures for launching VMs from images imported by
+`osu-import-cloud-images.sh`, covering all four combinations of network
+configuration and authentication method:
+
+| Scenario | Network | Auth |
+|---|---|---|
+| 1 | DHCP | SSH key |
+| 2 | DHCP | Password |
+| 3 | Static IP | SSH key |
+| 4 | Static IP | Password |
+
+Each scenario creates a `cloudadmin` user with passwordless sudo.
+Hostname is sourced from the OpenStack instance name via the metadata service.
+
+➡️ **[cloud-init-usage.md](cloud-init-usage.md)**
+
+Standalone user-data files ready for `--user-data` are in [`samples/`](samples/):
+
+| File | Network | Auth |
+|---|---|---|
+| [`cloud-init-dhcp-sshkey.yaml`](samples/cloud-init-dhcp-sshkey.yaml) | DHCP | SSH key |
+| [`cloud-init-dhcp-password.yaml`](samples/cloud-init-dhcp-password.yaml) | DHCP | Password |
+| [`cloud-init-static-sshkey.yaml`](samples/cloud-init-static-sshkey.yaml) | Static IP | SSH key |
+| [`cloud-init-static-password.yaml`](samples/cloud-init-static-password.yaml) | Static IP | Password |
 
 ---
 
