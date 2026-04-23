@@ -8,7 +8,7 @@
 #
 # Author: Ciro Iriarte <ciro.iriarte+software@gmail.com>
 # Created: 2026-04-23
-# Version: 0.3.0
+# Version: 0.4.0
 #
 # Requirements:
 #   - openstack CLI (python-openstackclient)
@@ -23,15 +23,16 @@
 set -euo pipefail
 
 # --- Configuration ---
-SCRIPT_VERSION="0.3.0"
+SCRIPT_VERSION="0.4.0"
 
 # Operational defaults
 OUTPUT_FORMAT="table"
 PROJECT_FILTER=""
 DOMAIN_FILTER=""
+SERVER_FILTER=""
 ALL_PROJECTS=0
 SHOW_PROGRESS=1
-MYSQL_UNIT="mysql-innodb-cluster/0"
+MYSQL_UNIT=""
 MISMATCH_ONLY=0
 
 # Caches
@@ -96,6 +97,7 @@ Description:
 
 Scope:
   (default)               Report VMs in the current project
+  -s, --server SERVER     Query a specific VM (by name or ID)
   -a, --all-projects      Report all VMs across all accessible projects
   -d, --domain DOMAIN     Report all VMs in projects of the specified domain
   -p, --project PROJECT   Limit to a single project (by name or ID)
@@ -104,7 +106,7 @@ Scope:
 Options:
   -f, --format FMT        Output format: table (default), csv, json
   -m, --mismatch-only     Show only VMs where current AZ differs from requested AZ
-      --mysql-unit UNIT   Juju mysql unit to query (default: mysql-innodb-cluster/0)
+      --mysql-unit UNIT   Juju mysql unit to query (default: auto-detect leader)
   -q, --quiet             Suppress progress indicators
   -h, --help              Show this help message
   -v, --version           Show version
@@ -122,6 +124,10 @@ Output columns:
 Examples:
   # Report VMs in current project
   $0
+
+  # Query a specific VM
+  $0 -s my-vm-name
+  $0 --server 12345678-1234-1234-1234-123456789abc
 
   # Report all VMs across all projects
   $0 --all-projects
@@ -176,7 +182,30 @@ check_auth() {
     fi
 }
 
+detect_mysql_leader() {
+    local leader
+    leader=$(juju status mysql-innodb-cluster --format json 2>/dev/null | \
+        jq -r '.applications["mysql-innodb-cluster"].units | to_entries[] | select(.value.leader == true) | .key') || {
+        err "Failed to query juju for mysql-innodb-cluster status."
+        exit 1
+    }
+
+    if [[ -z "$leader" ]]; then
+        err "Could not detect mysql-innodb-cluster leader unit."
+        err "Ensure mysql-innodb-cluster is deployed and accessible."
+        exit 1
+    fi
+
+    echo "$leader"
+}
+
 check_juju() {
+    # Auto-detect leader if not specified
+    if [[ -z "$MYSQL_UNIT" ]]; then
+        MYSQL_UNIT=$(detect_mysql_leader)
+        ok "Detected MySQL leader: $MYSQL_UNIT"
+    fi
+
     if ! juju status "$MYSQL_UNIT" --format=short &>/dev/null; then
         err "Cannot reach juju unit '$MYSQL_UNIT'."
         err "Ensure juju is configured and the mysql unit is accessible."
@@ -249,7 +278,33 @@ should_include_vm() {
 
 # --- Data collection ----------------------------------------------------------
 
+get_single_server() {
+    local server_id="$1"
+    openstack server show "$server_id" \
+        -f json \
+        -c id \
+        -c name \
+        -c status \
+        -c "OS-EXT-SRV-ATTR:host" \
+        -c "OS-EXT-AZ:availability_zone" \
+        -c project_id \
+        2>/dev/null | jq '[{
+            ID: .id,
+            Name: .name,
+            Status: .status,
+            Host: ."OS-EXT-SRV-ATTR:host",
+            "Availability Zone": ."OS-EXT-AZ:availability_zone",
+            "Project ID": .project_id
+        }]'
+}
+
 get_servers_cli() {
+    # If a specific server is requested, query just that one
+    if [[ -n "$SERVER_FILTER" ]]; then
+        get_single_server "$SERVER_FILTER"
+        return
+    fi
+
     local scope_args=()
 
     if (( ALL_PROJECTS )); then
@@ -514,8 +569,8 @@ output_json() {
 
 # --- Argument parsing ---------------------------------------------------------
 
-OPTIONS=$(getopt -o hvp:f:aqmd: \
-    --long help,version,project:,domain:,format:,all-projects,mismatch-only,mysql-unit:,quiet \
+OPTIONS=$(getopt -o hvp:f:aqmd:s: \
+    --long help,version,project:,domain:,format:,all-projects,mismatch-only,mysql-unit:,quiet,server: \
     -n "$0" -- "$@")
 if [[ $? -ne 0 ]]; then
     echo "Failed to parse options. Use --help for usage." >&2
@@ -536,6 +591,10 @@ while true; do
             ;;
         -p|--project)
             PROJECT_FILTER="$2"
+            shift 2
+            ;;
+        -s|--server)
+            SERVER_FILTER="$2"
             shift 2
             ;;
         -d|--domain)

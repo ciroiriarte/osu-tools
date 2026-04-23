@@ -1,6 +1,6 @@
 .\" Man page for osu-track-az-requirement.sh
 .\" Written in classic troff/groff format
-.TH OSU-TRACK-AZ-REQUIREMENT 1 "2026-04-23" "osu-track-az-requirement 0.3.0" "User Commands"
+.TH OSU-TRACK-AZ-REQUIREMENT 1 "2026-04-23" "osu-track-az-requirement 0.4.0" "User Commands"
 .SH NAME
 osu-track-az-requirement \- report OpenStack VMs with Availability Zone requirements
 .SH SYNOPSIS
@@ -57,6 +57,9 @@ database table, which this script queries via juju ssh to the MySQL unit.
 .SH OPTIONS
 .SS Scope Options
 .TP
+.BR \-s ", " \-\-server " " \fISERVER\fR
+Query a specific VM by name or ID.
+.TP
 .BR \-a ", " \-\-all\-projects
 Include VMs from all projects (requires OpenStack admin privileges).
 .TP
@@ -84,8 +87,8 @@ Suppress progress indicators.
 .SS Other Options
 .TP
 .BR \-\-mysql\-unit " " \fIUNIT\fR
-Specify the juju MySQL unit to query (default:
-.BR mysql-innodb-cluster/0 ).
+Specify the juju MySQL unit to query. By default, the script auto-detects
+the leader unit of the mysql-innodb-cluster application.
 .TP
 .BR \-v ", " \-\-version
 Display version information and exit.

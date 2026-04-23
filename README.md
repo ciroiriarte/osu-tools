@@ -34,7 +34,7 @@ A collection of Bash wrappers and tools to simplify OpenStack usage via the open
 | `osu-memory-usage-report.sh` | ![v0.2](https://img.shields.io/badge/version-0.2-orange) | 2025-12-24 | 2026-03-26 |
 | `osu-capacity-report.sh` | ![v0.1](https://img.shields.io/badge/version-0.1-orange) | 2026-03-27 | 2026-03-27 |
 | `osu-retype-vdisk.sh` | ![v0.2.0](https://img.shields.io/badge/version-0.2.0-orange) | 2026-03-27 | 2026-03-27 |
-| `osu-track-az-requirement.sh` | ![v0.3.0](https://img.shields.io/badge/version-0.3.0-orange) | 2026-04-23 | 2026-04-23 |
+| `osu-track-az-requirement.sh` | ![v0.4.0](https://img.shields.io/badge/version-0.4.0-orange) | 2026-04-23 | 2026-04-23 |
 | `osu-track-qemu-agents.sh` | ![v0.1.0](https://img.shields.io/badge/version-0.1.0-orange) | 2026-04-23 | 2026-04-23 |
 
 All scripts support `--version` / `-v` and `--help` / `-h` flags.
@@ -489,6 +489,9 @@ Reports OpenStack VMs with their host placement, effective Availability Zone, an
 ```bash
 # Report VMs in current project
 ./osu-track-az-requirement.sh
+
+# Query a specific VM
+./osu-track-az-requirement.sh -s my-vm-name
 
 # Report all VMs across all projects
 ./osu-track-az-requirement.sh --all-projects
