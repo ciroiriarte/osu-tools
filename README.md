@@ -17,6 +17,7 @@ A collection of Bash wrappers and tools to simplify OpenStack usage via the open
   - [osu-memory-usage-report.sh](#-osu-memory-usage-reportsh)
   - [osu-capacity-report.sh](#-osu-capacity-reportsh)
   - [osu-retype-vdisk.sh](#-osu-retype-vdisksh)
+  - [osu-track-az-requirement.sh](#-osu-track-az-requirementsh)
 - [Documentation](#-documentation)
 - [Contributing](#-contributing)
 - [License](#-license)
@@ -32,6 +33,7 @@ A collection of Bash wrappers and tools to simplify OpenStack usage via the open
 | `osu-memory-usage-report.sh` | ![v0.2](https://img.shields.io/badge/version-0.2-orange) | 2025-12-24 | 2026-03-26 |
 | `osu-capacity-report.sh` | ![v0.1](https://img.shields.io/badge/version-0.1-orange) | 2026-03-27 | 2026-03-27 |
 | `osu-retype-vdisk.sh` | ![v0.2.0](https://img.shields.io/badge/version-0.2.0-orange) | 2026-03-27 | 2026-03-27 |
+| `osu-track-az-requirement.sh` | ![v0.3.0](https://img.shields.io/badge/version-0.3.0-orange) | 2026-04-23 | 2026-04-23 |
 
 All scripts support `--version` / `-v` and `--help` / `-h` flags.
 
@@ -419,6 +421,105 @@ Retypes (migrates) OpenStack Cinder volumes between Ceph pools by changing the v
 
 # Display help
 ./osu-retype-vdisk.sh --help
+```
+
+---
+
+### 🔍 `osu-track-az-requirement.sh`
+
+Reports OpenStack VMs with their host placement, effective Availability Zone, and whether an AZ was explicitly requested at creation time. Queries the `nova_api.request_specs` table via juju for **authoritative** AZ request data.
+
+- **Author:** Ciro Iriarte
+- **Created:** 2026-04-23
+- **Updated:** 2026-04-23
+
+#### ⚙️ Requirements
+
+- Required tools:
+  - `openstack` CLI (python-openstackclient)
+  - `jq`
+  - `juju` CLI with SSH access to mysql-innodb-cluster unit
+- A sourced OpenStack credentials file (e.g., `openrc.sh`)
+
+#### 🔐 Permissions
+
+| Scope | OpenStack | Juju |
+|---|---|---|
+| Default (own project) | Regular user | SSH access to MySQL unit |
+| `--all-projects` | Admin | SSH access to MySQL unit |
+| `-d <domain>` | Admin or domain-admin | SSH access to MySQL unit |
+| `-p <other-project>` | Admin | SSH access to MySQL unit |
+
+#### 📋 AZ Request Detection (Authoritative)
+
+| Indicator | Meaning |
+|---|---|
+| `<az-name>` | AZ was explicitly requested at creation (shows the requested AZ) |
+| `—` | No AZ was requested (scheduler chose placement freely) |
+| `n/a` | VM not found in request_specs table |
+
+**Note:** The Nova API does not expose `request_spec`. This script queries the database directly for authoritative information.
+
+#### 📊 Interpreting Results
+
+| Scenario | Current AZ | Requested | Match | Interpretation |
+|---|---|---|---|---|
+| Explicit AZ, not moved | `az1` | `az1` | ✓ | VM requested az1 and is still there |
+| Explicit AZ, was moved | `az1` | `nova` | ✗ | VM requested nova but was migrated to az1 |
+| No AZ requested | `az2` | `—` | — | Scheduler placed VM freely; can migrate anywhere |
+| Pinned to AZ | `az1` | `az1` | ✓ | Future migrations constrained to az1 |
+
+#### 💡 Recommendations
+
+- Source your OpenStack credentials before running:
+  ```bash
+  source ~/openrc.sh
+  ```
+- Use `--all-projects` for a platform-wide inventory.
+- Use `-d <domain>` for domain-scoped reports.
+- Use `--mismatch-only` to find VMs that have been migrated.
+- VMs with `Requested = —` can be freely live-migrated across AZs.
+- VMs with `Requested = <az>` are constrained to that AZ for migrations/evacuations.
+- Export to CSV for spreadsheet analysis or JSON for scripting.
+
+#### 🚀 Usage
+
+```bash
+# Report VMs in current project
+./osu-track-az-requirement.sh
+
+# Report all VMs across all projects
+./osu-track-az-requirement.sh --all-projects
+
+# Report all VMs in a specific domain
+./osu-track-az-requirement.sh -d my-domain
+
+# Report VMs in a specific project
+./osu-track-az-requirement.sh -p my-project
+
+# Report VMs in a project within a specific domain
+./osu-track-az-requirement.sh -d my-domain -p my-project
+
+# Show only VMs that have been migrated (mismatch between current and requested AZ)
+./osu-track-az-requirement.sh --mismatch-only --all-projects
+
+# CSV output for spreadsheet analysis
+./osu-track-az-requirement.sh -f csv --all-projects > az-report.csv
+
+# JSON output for scripting
+./osu-track-az-requirement.sh -f json -p my-project
+
+# Use a different MySQL unit
+./osu-track-az-requirement.sh --mysql-unit mysql-innodb-cluster/1 --all-projects
+
+# Suppress progress indicators
+./osu-track-az-requirement.sh --all-projects -q
+
+# Display version
+./osu-track-az-requirement.sh --version
+
+# Display help
+./osu-track-az-requirement.sh --help
 ```
 
 ---

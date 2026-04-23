@@ -1,0 +1,243 @@
+.\" Man page for osu-track-az-requirement.sh
+.\" Written in classic troff/groff format
+.TH OSU-TRACK-AZ-REQUIREMENT 1 "2026-04-23" "osu-track-az-requirement 0.3.0" "User Commands"
+.SH NAME
+osu-track-az-requirement \- report OpenStack VMs with Availability Zone requirements
+.SH SYNOPSIS
+.B osu-track-az-requirement.sh
+.RB [ \-h | \-\-help ]
+.RB [ \-v | \-\-version ]
+.PP
+.B osu-track-az-requirement.sh
+.RB [ \-f | \-\-format
+.IR FMT ]
+.RB [ \-a | \-\-all\-projects ]
+.RB [ \-d | \-\-domain
+.IR DOMAIN ]
+.RB [ \-m | \-\-mismatch\-only ]
+.RB [ \-\-mysql\-unit
+.IR UNIT ]
+.RB [ \-q | \-\-quiet ]
+.PP
+.B osu-track-az-requirement.sh
+.RB \-p | \-\-project
+.I PROJECT
+.RB [ \-d | \-\-domain
+.IR DOMAIN ]
+.RB [ \-f | \-\-format
+.IR FMT ]
+.SH DESCRIPTION
+.B osu-track-az-requirement.sh
+reports OpenStack VMs with their host placement, effective Availability Zone,
+and whether an AZ was explicitly requested at creation time.
+.PP
+This script queries the
+.B nova_api.request_specs
+table via
+.B juju
+to obtain authoritative AZ request data. If an AZ is present in the
+request_spec, it was explicitly requested at VM creation time.
+.PP
+.B AZ Request Detection (authoritative from database):
+.IP \(bu 2
+.B "<az-name>"
+\(em AZ was explicitly requested at creation (shows the requested AZ name)
+.IP \(bu 2
+.B "\(em"
+\(em No AZ was requested (scheduler chose placement freely)
+.IP \(bu 2
+.B "n/a"
+\(em Unable to query database (VM may be missing from request_specs)
+.PP
+.B Important:
+The Nova API does not expose the request_spec object. The only authoritative
+source for AZ request information is the
+.B nova_api.request_specs
+database table, which this script queries via juju ssh to the MySQL unit.
+.SH OPTIONS
+.SS Scope Options
+.TP
+.BR \-a ", " \-\-all\-projects
+Include VMs from all projects (requires OpenStack admin privileges).
+.TP
+.BR \-d ", " \-\-domain " " \fIDOMAIN\fR
+Report all VMs in projects belonging to the specified domain.
+.TP
+.BR \-p ", " \-\-project " " \fIPROJECT\fR
+Limit output to a single project, specified by name or ID.
+Can be combined with
+.B \-d
+for cross-domain project lookup.
+.SS Filter Options
+.TP
+.BR \-m ", " \-\-mismatch\-only
+Show only VMs where current AZ differs from the requested AZ.
+Useful for identifying VMs that have been migrated or evacuated.
+.SS Output Options
+.TP
+.BR \-f ", " \-\-format " " \fIFMT\fR
+Set output format. Valid values are
+.BR table " (default), " csv ", and " json .
+.TP
+.BR \-q ", " \-\-quiet
+Suppress progress indicators.
+.SS Other Options
+.TP
+.BR \-\-mysql\-unit " " \fIUNIT\fR
+Specify the juju MySQL unit to query (default:
+.BR mysql-innodb-cluster/0 ).
+.TP
+.BR \-v ", " \-\-version
+Display version information and exit.
+.TP
+.BR \-h ", " \-\-help
+Display usage information and exit.
+.SH OUTPUT COLUMNS
+.TP
+.B ID
+Instance UUID.
+.TP
+.B Name
+Instance name.
+.TP
+.B Project
+Project name (only shown with
+.BR \-\-all\-projects " or " \-\-domain ).
+.TP
+.B Status
+Nova instance state (ACTIVE, SHUTOFF, ERROR, etc.).
+.TP
+.B Host
+Hypervisor hostname where the VM is running.
+.TP
+.B Current AZ
+Availability Zone where the VM currently resides.
+.TP
+.B Requested
+AZ explicitly requested at boot (from request_specs), or \(em if none.
+.TP
+.B Match
+Whether current AZ matches requested: \fB\[u2713]\fR (match), \fB\[u2717]\fR (mismatch), \fB\(em\fR (n/a).
+.SH EXIT STATUS
+.TP
+.B 0
+Successful execution.
+.TP
+.B 1
+Error occurred (missing dependencies, authentication failure, juju unreachable, invalid options).
+.SH EXAMPLES
+Report VMs in the current project:
+.PP
+.RS
+.nf
+$ osu-track-az-requirement.sh
+.fi
+.RE
+.PP
+Report all VMs across all projects:
+.PP
+.RS
+.nf
+$ osu-track-az-requirement.sh --all-projects
+.fi
+.RE
+.PP
+Report all VMs in a specific domain:
+.PP
+.RS
+.nf
+$ osu-track-az-requirement.sh -d my-domain
+.fi
+.RE
+.PP
+Report VMs in a specific project:
+.PP
+.RS
+.nf
+$ osu-track-az-requirement.sh -p my-project
+.fi
+.RE
+.PP
+Report VMs in a specific project within a domain:
+.PP
+.RS
+.nf
+$ osu-track-az-requirement.sh -d my-domain -p my-project
+.fi
+.RE
+.PP
+Show only VMs that have been migrated (current AZ != requested AZ):
+.PP
+.RS
+.nf
+$ osu-track-az-requirement.sh --mismatch-only --all-projects
+.fi
+.RE
+.PP
+CSV output for spreadsheet analysis:
+.PP
+.RS
+.nf
+$ osu-track-az-requirement.sh -f csv --all-projects > vms.csv
+.fi
+.RE
+.PP
+JSON output for scripting (filter mismatches):
+.PP
+.RS
+.nf
+$ osu-track-az-requirement.sh -f json --all-projects | jq '.[] | select(.match == false)'
+.fi
+.RE
+.SH ENVIRONMENT
+The script requires:
+.IP \(bu 2
+Valid OpenStack credentials sourced (e.g.,
+.BR "source ~/openrc.sh" ).
+.IP \(bu 2
+SSH access to a juju controller with the MySQL InnoDB Cluster deployed.
+.SS Permissions
+.IP \(bu 2
+.B Default (own project):
+Regular OpenStack user + juju SSH access.
+.IP \(bu 2
+.B --all-projects or -p <other-project>:
+OpenStack admin + juju SSH access.
+.IP \(bu 2
+.B --domain:
+OpenStack admin or domain admin + juju SSH access.
+.SH FILES
+.TP
+.I ~/openrc.sh
+OpenStack credentials file (typical location).
+.SH NOTES
+.SS Why Database Access?
+The Nova API does not expose the
+.B request_spec
+object, which contains the original scheduling requirements including any
+explicitly requested Availability Zone. This information is stored in the
+.B nova_api.request_specs
+table and is only accessible via database query.
+.PP
+This script uses
+.B juju ssh
+to query the MySQL database, making it suitable for Charmed OpenStack
+deployments.
+.SS Interpreting Results
+.IP \(bu 2
+.B "Current AZ differs from Requested (Match = \[u2717])"
+\(em The VM was migrated or evacuated after creation.
+.IP \(bu 2
+.B "Requested = \(em"
+\(em The scheduler had full freedom to place the VM; it can be live-migrated
+to any host/AZ without constraint.
+.IP \(bu 2
+.B "Requested = <az-name>"
+\(em Future migrations/evacuations are constrained to the requested AZ.
+.SH AUTHORS
+Ciro Iriarte <ciro.iriarte+software@gmail.com>
+.SH SEE ALSO
+.BR openstack (1),
+.BR osu-capacity-report (1),
+.BR juju (1),
+.BR nova (1)
