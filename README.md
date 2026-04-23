@@ -18,6 +18,7 @@ A collection of Bash wrappers and tools to simplify OpenStack usage via the open
   - [osu-capacity-report.sh](#-osu-capacity-reportsh)
   - [osu-retype-vdisk.sh](#-osu-retype-vdisksh)
   - [osu-track-az-requirement.sh](#-osu-track-az-requirementsh)
+  - [osu-track-qemu-agents.sh](#-osu-track-qemu-agentssh)
 - [Documentation](#-documentation)
 - [Contributing](#-contributing)
 - [License](#-license)
@@ -34,6 +35,7 @@ A collection of Bash wrappers and tools to simplify OpenStack usage via the open
 | `osu-capacity-report.sh` | ![v0.1](https://img.shields.io/badge/version-0.1-orange) | 2026-03-27 | 2026-03-27 |
 | `osu-retype-vdisk.sh` | ![v0.2.0](https://img.shields.io/badge/version-0.2.0-orange) | 2026-03-27 | 2026-03-27 |
 | `osu-track-az-requirement.sh` | ![v0.3.0](https://img.shields.io/badge/version-0.3.0-orange) | 2026-04-23 | 2026-04-23 |
+| `osu-track-qemu-agents.sh` | ![v0.1.0](https://img.shields.io/badge/version-0.1.0-orange) | 2026-04-23 | 2026-04-23 |
 
 All scripts support `--version` / `-v` and `--help` / `-h` flags.
 
@@ -520,6 +522,102 @@ Reports OpenStack VMs with their host placement, effective Availability Zone, an
 
 # Display help
 ./osu-track-az-requirement.sh --help
+```
+
+---
+
+### 🔍 `osu-track-qemu-agents.sh`
+
+Reports OpenStack VMs with their QEMU guest agent configuration and communication status. For each VM, shows whether the agent bus is configured (`hw_qemu_guest_agent` in the source image) and whether the agent is actually responding.
+
+- **Author:** Ciro Iriarte
+- **Created:** 2026-04-23
+- **Updated:** 2026-04-23
+
+#### ⚙️ Requirements
+
+- Required tools:
+  - `openstack` CLI (python-openstackclient)
+  - `curl` (for Nova diagnostics API)
+  - `jq`
+- A sourced OpenStack credentials file (e.g., `openrc.sh`)
+
+#### 🔐 Permissions
+
+| Scope | Requirement |
+|---|---|
+| Default (own project) | Regular OpenStack user |
+| `--all-projects` | OpenStack admin |
+| `-d <domain>` | Admin or domain-admin |
+| `-p <other-project>` | OpenStack admin |
+
+#### 📋 Detection Methods (CLI/API Only)
+
+| Check | Method | Notes |
+|---|---|---|
+| **Agent Bus** | Image properties via CLI | Checks `hw_qemu_guest_agent` in image or volume_image_metadata |
+| **Agent Responding** | Nova diagnostics API | Presence of `memory-unused`/`memory-available` indicates balloon/agent communication |
+
+#### 📊 Status Indicators
+
+| Symbol | Agent Bus | Responding |
+|---|---|---|
+| ✓ | Configured in image | Agent communicating |
+| ✗ | Not configured | Agent not responding |
+| ? | Couldn't determine (image deleted) | Couldn't determine (VM not active) |
+
+#### 📊 Interpreting Results
+
+| Bus | Responding | Interpretation |
+|---|---|---|
+| ✓ | ✓ | Fully operational — agent installed and communicating |
+| ✓ | ✗ | Bus configured but agent not responding — install `qemu-guest-agent` in guest |
+| ✗ | ? | No agent support — live migration features limited |
+| ? | ? | Unable to determine (VM off or image deleted) |
+
+#### 💡 Recommendations
+
+- Source your OpenStack credentials before running:
+  ```bash
+  source ~/openrc.sh
+  ```
+- Use `--issues-only` to focus on VMs that need attention.
+- Install `qemu-guest-agent` in VMs where the bus is configured but agent is not responding.
+- VMs without agent support (`✗` for bus) cannot use features like quiesced snapshots or filesystem freeze.
+- Export to CSV for spreadsheet analysis or JSON for scripting.
+
+#### 🚀 Usage
+
+```bash
+# Report VMs in current project
+./osu-track-qemu-agents.sh
+
+# Report all VMs across all projects
+./osu-track-qemu-agents.sh --all-projects
+
+# Report all VMs in a specific domain
+./osu-track-qemu-agents.sh -d my-domain
+
+# Report VMs in a specific project
+./osu-track-qemu-agents.sh -p my-project
+
+# Show only VMs with agent issues
+./osu-track-qemu-agents.sh --issues-only --all-projects
+
+# CSV output for spreadsheet analysis
+./osu-track-qemu-agents.sh -f csv --all-projects > agents.csv
+
+# JSON output for scripting (filter VMs without responding agent)
+./osu-track-qemu-agents.sh -f json --all-projects | jq '.[] | select(.agent_responding == false)'
+
+# Suppress progress indicators
+./osu-track-qemu-agents.sh --all-projects -q
+
+# Display version
+./osu-track-qemu-agents.sh --version
+
+# Display help
+./osu-track-qemu-agents.sh --help
 ```
 
 ---

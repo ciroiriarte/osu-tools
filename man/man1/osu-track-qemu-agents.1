@@ -1,0 +1,221 @@
+.\" Man page for osu-track-qemu-agents.sh
+.\" Written in classic troff/groff format
+.TH OSU-TRACK-QEMU-AGENTS 1 "2026-04-23" "osu-track-qemu-agents 0.1.0" "User Commands"
+.SH NAME
+osu-track-qemu-agents \- report OpenStack VMs with QEMU guest agent status
+.SH SYNOPSIS
+.B osu-track-qemu-agents.sh
+.RB [ \-h | \-\-help ]
+.RB [ \-v | \-\-version ]
+.PP
+.B osu-track-qemu-agents.sh
+.RB [ \-f | \-\-format
+.IR FMT ]
+.RB [ \-a | \-\-all\-projects ]
+.RB [ \-d | \-\-domain
+.IR DOMAIN ]
+.RB [ \-i | \-\-issues\-only ]
+.RB [ \-q | \-\-quiet ]
+.PP
+.B osu-track-qemu-agents.sh
+.RB \-p | \-\-project
+.I PROJECT
+.RB [ \-d | \-\-domain
+.IR DOMAIN ]
+.RB [ \-f | \-\-format
+.IR FMT ]
+.SH DESCRIPTION
+.B osu-track-qemu-agents.sh
+reports OpenStack VMs with their QEMU guest agent configuration and
+communication status. For each VM, it shows:
+.IP 1. 3
+.B Agent Bus:
+Whether
+.B hw_qemu_guest_agent
+is enabled in the source image (the virtio-serial device for agent communication).
+.IP 2. 3
+.B Agent Responding:
+Whether the agent is actually communicating with the hypervisor.
+.PP
+.B Detection Methods (CLI/API only, no database access):
+.IP \(bu 2
+.B Agent Bus:
+Checks image properties via the OpenStack CLI. For boot-from-volume VMs,
+checks volume_image_metadata.
+.IP \(bu 2
+.B Agent Responding:
+Uses the Nova diagnostics API. Presence of detailed memory statistics
+(memory-unused, memory-available) indicates the balloon driver and agent
+are communicating.
+.PP
+.B Status Indicators:
+.IP \(bu 2
+.B "\[u2713]"
+\(em Yes (bus configured / agent responding)
+.IP \(bu 2
+.B "\[u2717]"
+\(em No (bus not configured / agent not responding)
+.IP \(bu 2
+.B "?"
+\(em Couldn't determine (VM not running, image deleted, etc.)
+.SH OPTIONS
+.SS Scope Options
+.TP
+.BR \-a ", " \-\-all\-projects
+Include VMs from all projects (requires OpenStack admin privileges).
+.TP
+.BR \-d ", " \-\-domain " " \fIDOMAIN\fR
+Report all VMs in projects belonging to the specified domain.
+.TP
+.BR \-p ", " \-\-project " " \fIPROJECT\fR
+Limit output to a single project, specified by name or ID.
+Can be combined with
+.B \-d
+for cross-domain project lookup.
+.SS Filter Options
+.TP
+.BR \-i ", " \-\-issues\-only
+Show only VMs with agent issues (bus not configured or agent not responding).
+Useful for identifying VMs that need attention.
+.SS Output Options
+.TP
+.BR \-f ", " \-\-format " " \fIFMT\fR
+Set output format. Valid values are
+.BR table " (default), " csv ", and " json .
+.TP
+.BR \-q ", " \-\-quiet
+Suppress progress indicators.
+.SS Other Options
+.TP
+.BR \-v ", " \-\-version
+Display version information and exit.
+.TP
+.BR \-h ", " \-\-help
+Display usage information and exit.
+.SH OUTPUT COLUMNS
+.TP
+.B ID
+Instance UUID.
+.TP
+.B Name
+Instance name.
+.TP
+.B Project
+Project name (only shown with
+.BR \-\-all\-projects " or " \-\-domain ).
+.TP
+.B Status
+Nova instance state (ACTIVE, SHUTOFF, ERROR, etc.).
+.TP
+.B Agent Bus
+Whether hw_qemu_guest_agent is set in the source image: \fB\[u2713]\fR (yes), \fB\[u2717]\fR (no), \fB?\fR (couldn't determine).
+.TP
+.B Responding
+Whether the agent is communicating: \fB\[u2713]\fR (yes), \fB\[u2717]\fR (no), \fB?\fR (couldn't determine).
+.TP
+.B Image/Volume
+Source image name, or "vol:<image-name>" for boot-from-volume VMs.
+.SH EXIT STATUS
+.TP
+.B 0
+Successful execution.
+.TP
+.B 1
+Error occurred (missing dependencies, authentication failure, invalid options).
+.SH EXAMPLES
+Report VMs in the current project:
+.PP
+.RS
+.nf
+$ osu-track-qemu-agents.sh
+.fi
+.RE
+.PP
+Report all VMs across all projects:
+.PP
+.RS
+.nf
+$ osu-track-qemu-agents.sh --all-projects
+.fi
+.RE
+.PP
+Report all VMs in a specific domain:
+.PP
+.RS
+.nf
+$ osu-track-qemu-agents.sh -d my-domain
+.fi
+.RE
+.PP
+Show only VMs with agent issues:
+.PP
+.RS
+.nf
+$ osu-track-qemu-agents.sh --issues-only --all-projects
+.fi
+.RE
+.PP
+CSV output for spreadsheet analysis:
+.PP
+.RS
+.nf
+$ osu-track-qemu-agents.sh -f csv --all-projects > agents.csv
+.fi
+.RE
+.PP
+JSON output for scripting (filter VMs without responding agent):
+.PP
+.RS
+.nf
+$ osu-track-qemu-agents.sh -f json --all-projects | jq '.[] | select(.agent_responding == false)'
+.fi
+.RE
+.SH ENVIRONMENT
+The script requires:
+.IP \(bu 2
+Valid OpenStack credentials sourced (e.g.,
+.BR "source ~/openrc.sh" ).
+.SS Permissions
+.IP \(bu 2
+.B Default (own project):
+Regular OpenStack user.
+.IP \(bu 2
+.B --all-projects or -p <other-project>:
+OpenStack admin.
+.IP \(bu 2
+.B --domain:
+OpenStack admin or domain admin.
+.SH FILES
+.TP
+.I ~/openrc.sh
+OpenStack credentials file (typical location).
+.SH NOTES
+.SS Why Check Both Bus and Responding?
+.IP \(bu 2
+.B Bus configured but not responding:
+The image has hw_qemu_guest_agent=yes, but the agent is not installed,
+not running, or the VM is powered off. For running VMs, this indicates
+the qemu-guest-agent package needs to be installed.
+.IP \(bu 2
+.B Bus not configured but responding:
+Unusual \(em the agent shouldn't be able to communicate without the virtio-serial
+device. May indicate image metadata is incorrect.
+.IP \(bu 2
+.B Neither configured nor responding:
+The VM was not created with agent support. Live migration features like
+guest filesystem freeze will not work.
+.SS Detection Limitations
+.IP \(bu 2
+Agent response detection only works for ACTIVE VMs.
+.IP \(bu 2
+The diagnostics API check relies on memory statistics from the balloon driver,
+which typically accompanies the guest agent.
+.IP \(bu 2
+Boot-from-volume VMs inherit agent configuration from volume_image_metadata.
+.SH AUTHORS
+Ciro Iriarte <ciro.iriarte+software@gmail.com>
+.SH SEE ALSO
+.BR openstack (1),
+.BR osu-track-az-requirement (1),
+.BR osu-capacity-report (1),
+.BR qemu-ga (8)
