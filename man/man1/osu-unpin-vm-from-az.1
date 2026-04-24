@@ -1,0 +1,164 @@
+.\" Man page for osu-unpin-vm-from-az.sh
+.\" Written in classic troff/groff format
+.TH OSU-UNPIN-VM-FROM-AZ 1 "2026-04-24" "osu-unpin-vm-from-az 0.1.0" "User Commands"
+.SH NAME
+osu-unpin-vm-from-az \- remove Availability Zone constraint from OpenStack VM
+.SH SYNOPSIS
+.B osu-unpin-vm-from-az.sh
+.RB [ \-h | \-\-help ]
+.RB [ \-v | \-\-version ]
+.PP
+.B osu-unpin-vm-from-az.sh
+.RB [ \-t | \-\-target\-host
+.IR HOST ]
+.RB [ \-\-venv
+.IR PATH ]
+.RB [ \-\-dry\-run ]
+.RB [ \-f | \-\-force ]
+.RB [ \-\-insecure ]
+.RB [ \-q | \-\-quiet ]
+.I SERVER
+.SH DESCRIPTION
+.B osu-unpin-vm-from-az.sh
+removes the Availability Zone (AZ) hard request from an OpenStack VM to
+enable cross-AZ cold migration. When a VM is created with an explicit AZ,
+Nova stores this as a hard constraint that prevents the scheduler from
+placing the VM in other AZs during migration.
+.PP
+This script uses the shelve/unshelve workflow with the
+.B \-\-no\-availability\-zone
+flag (requires Nova API >= 2.91 and python-openstackclient >= 9.0.0):
+.IP 1. 3
+Stop the instance (if running)
+.IP 2. 3
+Shelve the instance
+.IP 3. 3
+Wait for SHELVED_OFFLOADED state
+.IP 4. 3
+Unshelve with \-\-no\-availability\-zone [--host TARGET]
+.PP
+After unpinning, the VM can be cold-migrated to any AZ.
+.SS Automatic Client Setup
+If the system
+.B openstack
+client is outdated (< 9.0.0), the script automatically creates a Python
+virtual environment at
+.I ~/.osu-tools/osc-venv
+with the required client version. This is a one-time setup.
+.SH OPTIONS
+.SS Placement Options
+.TP
+.BR \-t ", " \-\-target\-host " " \fIHOST\fR
+Target compute host for unshelve. If not specified, the scheduler
+chooses placement freely.
+.SS Execution Options
+.TP
+.B \-\-dry\-run
+Show what would be done without making changes.
+.TP
+.BR \-f ", " \-\-force
+Skip confirmation prompt.
+.TP
+.B \-\-insecure
+Allow insecure SSL connections (skip certificate verification).
+.TP
+.B \-\-venv " " \fIPATH\fR
+Use a specific Python venv instead of auto-detection.
+.SS Other Options
+.TP
+.BR \-q ", " \-\-quiet
+Suppress progress output.
+.TP
+.BR \-v ", " \-\-version
+Display version information and exit.
+.TP
+.BR \-h ", " \-\-help
+Display usage information and exit.
+.SH EXIT STATUS
+.TP
+.B 0
+Successful execution.
+.TP
+.B 1
+Error occurred (missing dependencies, authentication failure, API error).
+.SH EXAMPLES
+Unpin a VM (scheduler chooses new host):
+.PP
+.RS
+.nf
+$ osu-unpin-vm-from-az.sh my-vm
+.fi
+.RE
+.PP
+Unpin and place on specific host:
+.PP
+.RS
+.nf
+$ osu-unpin-vm-from-az.sh --target-host compute-node-05 my-vm
+.fi
+.RE
+.PP
+Dry run to see what would happen:
+.PP
+.RS
+.nf
+$ osu-unpin-vm-from-az.sh --dry-run my-vm
+.fi
+.RE
+.PP
+Skip confirmation prompt:
+.PP
+.RS
+.nf
+$ osu-unpin-vm-from-az.sh --force my-vm
+.fi
+.RE
+.SH ENVIRONMENT
+The script requires:
+.IP \(bu 2
+Valid OpenStack credentials sourced (e.g.,
+.BR "source ~/openrc.sh" ).
+.IP \(bu 2
+OpenStack admin privileges.
+.IP \(bu 2
+Python 3 with venv support (for automatic client setup).
+.SH FILES
+.TP
+.I ~/.osu-tools/osc-venv
+Automatically created Python venv with python-openstackclient >= 9.0.0.
+.SH NOTES
+.SS Why Unpin?
+When a VM is created with an explicit AZ (e.g.,
+.BR "openstack server create --availability-zone az1" ),
+Nova stores this as a hard constraint in the
+.B request_specs
+table. This prevents cross-AZ migrations even when the target AZ has
+available capacity.
+.PP
+Unpinning removes this constraint, allowing:
+.IP \(bu 2
+Cold migration to any AZ
+.IP \(bu 2
+Better resource utilization across AZs
+.IP \(bu 2
+Infrastructure-level redundancy when AZ-level redundancy isn't needed
+.SS Downtime
+The VM will experience downtime during the procedure:
+.IP \(bu 2
+Stop: brief
+.IP \(bu 2
+Shelve: VM is shut down and disk snapshotted
+.IP \(bu 2
+Unshelve: VM is recreated from snapshot
+.PP
+Plan for a maintenance window of several minutes.
+.SS Verification
+Use
+.BR osu-track-az-requirement (1)
+to verify the AZ constraint was removed.
+.SH AUTHORS
+Ciro Iriarte <ciro.iriarte+software@gmail.com>
+.SH SEE ALSO
+.BR openstack (1),
+.BR osu-track-az-requirement (1),
+.BR nova (1)

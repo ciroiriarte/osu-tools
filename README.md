@@ -19,6 +19,7 @@ A collection of Bash wrappers and tools to simplify OpenStack usage via the open
   - [osu-retype-vdisk.sh](#-osu-retype-vdisksh)
   - [osu-track-az-requirement.sh](#-osu-track-az-requirementsh)
   - [osu-track-qemu-agents.sh](#-osu-track-qemu-agentssh)
+  - [osu-unpin-vm-from-az.sh](#-osu-unpin-vm-from-azsh)
 - [Documentation](#-documentation)
 - [Contributing](#-contributing)
 - [License](#-license)
@@ -34,8 +35,9 @@ A collection of Bash wrappers and tools to simplify OpenStack usage via the open
 | `osu-memory-usage-report.sh` | ![v0.2](https://img.shields.io/badge/version-0.2-orange) | 2025-12-24 | 2026-03-26 |
 | `osu-capacity-report.sh` | ![v0.1](https://img.shields.io/badge/version-0.1-orange) | 2026-03-27 | 2026-03-27 |
 | `osu-retype-vdisk.sh` | ![v0.2.0](https://img.shields.io/badge/version-0.2.0-orange) | 2026-03-27 | 2026-03-27 |
-| `osu-track-az-requirement.sh` | ![v0.4.0](https://img.shields.io/badge/version-0.4.0-orange) | 2026-04-23 | 2026-04-23 |
-| `osu-track-qemu-agents.sh` | ![v0.2.0](https://img.shields.io/badge/version-0.2.0-orange) | 2026-04-23 | 2026-04-24 |
+| `osu-track-az-requirement.sh` | ![v0.4.1](https://img.shields.io/badge/version-0.4.1-orange) | 2026-04-23 | 2026-04-24 |
+| `osu-track-qemu-agents.sh` | ![v0.2.1](https://img.shields.io/badge/version-0.2.1-orange) | 2026-04-23 | 2026-04-24 |
+| `osu-unpin-vm-from-az.sh` | ![v0.1.0](https://img.shields.io/badge/version-0.1.0-orange) | 2026-04-24 | 2026-04-24 |
 
 All scripts support `--version` / `-v` and `--help` / `-h` flags.
 
@@ -621,6 +623,82 @@ Reports OpenStack VMs with their QEMU guest agent configuration and communicatio
 
 # Display help
 ./osu-track-qemu-agents.sh --help
+```
+
+---
+
+### 🔓 `osu-unpin-vm-from-az.sh`
+
+Removes the Availability Zone (AZ) hard request from an OpenStack VM to enable cross-AZ cold migration. Uses the shelve/unshelve workflow with `--no-availability-zone` flag.
+
+- **Author:** Ciro Iriarte
+- **Created:** 2026-04-24
+- **Updated:** 2026-04-24
+
+#### ⚙️ Requirements
+
+- Required tools:
+  - `openstack` CLI (python-openstackclient)
+  - `jq`
+  - `python3` with venv support
+- A sourced OpenStack credentials file (e.g., `openrc.sh`)
+
+#### 🔐 Permissions
+
+| Scope | Requirement |
+|---|---|
+| Any VM | OpenStack admin |
+
+#### 📋 How It Works
+
+1. Stop the instance (if running)
+2. Shelve the instance
+3. Wait for `SHELVED_OFFLOADED` state
+4. Unshelve with `--no-availability-zone` (and optionally `--host`)
+
+#### 🔧 Automatic Client Setup
+
+The `--no-availability-zone` flag requires `python-openstackclient >= 9.0.0`. If the system client is outdated, the script **automatically**:
+1. Creates a Python venv at `~/.osu-tools/osc-venv`
+2. Installs the required client version
+3. Uses the venv for operations
+
+This is a one-time setup that happens transparently.
+
+#### 💡 Recommendations
+
+- Source your OpenStack credentials before running:
+  ```bash
+  source ~/openrc.sh
+  ```
+- Plan for VM downtime during the procedure (stop → shelve → unshelve).
+- Use `--dry-run` to preview operations before executing.
+- After unpinning, verify with `osu-track-az-requirement.sh` that the AZ constraint is removed.
+- The VM can then be cold-migrated to any AZ using standard `openstack server migrate`.
+
+#### 🚀 Usage
+
+```bash
+# Unpin a VM (scheduler chooses new host)
+./osu-unpin-vm-from-az.sh my-vm
+
+# Unpin and place on specific host
+./osu-unpin-vm-from-az.sh --target-host compute-node-05 my-vm
+
+# Dry run to see what would happen
+./osu-unpin-vm-from-az.sh --dry-run my-vm
+
+# Skip confirmation prompt
+./osu-unpin-vm-from-az.sh --force my-vm
+
+# Allow insecure SSL connections
+./osu-unpin-vm-from-az.sh --insecure my-vm
+
+# Display version
+./osu-unpin-vm-from-az.sh --version
+
+# Display help
+./osu-unpin-vm-from-az.sh --help
 ```
 
 ---
