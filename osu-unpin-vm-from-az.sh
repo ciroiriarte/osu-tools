@@ -155,7 +155,7 @@ check_dependencies() {
 
 check_client_supports_unpin() {
     local osc_path="$1"
-    local version major minor
+    local version major
 
     # Check both help text AND version >= 9.0.0 (openstacksdk 4.x)
     if ! "$osc_path" server unshelve --help 2>&1 | grep -q -- '--no-availability-zone'; then
@@ -168,7 +168,7 @@ check_client_supports_unpin() {
         return 1
     fi
 
-    IFS='.' read -r major minor _ <<< "$version"
+    IFS='.' read -r major _ <<< "$version"
     if (( major < 9 )); then
         return 1
     fi
@@ -334,6 +334,7 @@ do_unpin() {
     local name
     name=$(echo "$server_info" | jq -r '.name')
 
+    # shellcheck disable=SC2034  # Reserved for rollback support
     ORIGINAL_STATUS="$status"
     ORIGINAL_HOST="$host"
     ORIGINAL_AZ="$az"
