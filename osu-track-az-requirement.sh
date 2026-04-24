@@ -8,7 +8,7 @@
 #
 # Author: Ciro Iriarte <ciro.iriarte+software@gmail.com>
 # Created: 2026-04-23
-# Version: 0.4.0
+# Version: 0.4.1
 #
 # Requirements:
 #   - openstack CLI (python-openstackclient)
@@ -23,7 +23,7 @@
 set -euo pipefail
 
 # --- Configuration ---
-SCRIPT_VERSION="0.4.0"
+SCRIPT_VERSION="0.4.1"
 
 # Operational defaults
 OUTPUT_FORMAT="table"
@@ -60,6 +60,7 @@ err()  { echo -e "   ${C_RED}[-]${C_RESET} $*" >&2; }
 
 progress() {
     (( SHOW_PROGRESS )) || return 0
+    [[ -t 2 ]] || return 0  # Only show progress if stderr is a TTY
     local current="$1" total="$2" label="$3"
     local pct=$(( current * 100 / total ))
     local filled=$(( pct / 5 ))
@@ -71,6 +72,7 @@ progress() {
 
 progress_done() {
     (( SHOW_PROGRESS )) || return 0
+    [[ -t 2 ]] || return 0  # Only if stderr is a TTY
     printf "\r%80s\r" "" >&2
 }
 

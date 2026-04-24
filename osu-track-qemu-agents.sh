@@ -7,7 +7,7 @@
 #
 # Author: Ciro Iriarte <ciro.iriarte+software@gmail.com>
 # Created: 2026-04-23
-# Version: 0.2.0
+# Version: 0.2.1
 #
 # Requirements:
 #   - openstack CLI (python-openstackclient)
@@ -23,7 +23,7 @@
 set -euo pipefail
 
 # --- Configuration ---
-SCRIPT_VERSION="0.2.0"
+SCRIPT_VERSION="0.2.1"
 
 # Operational defaults
 OUTPUT_FORMAT="table"
@@ -429,12 +429,16 @@ cache_project_name() {
 # --- Status formatting --------------------------------------------------------
 
 format_bool_status() {
-    local value="$1"
+    local value="$1" width="${2:-9}"
+    local symbol padding
     case "$value" in
-        true) echo "✓" ;;
-        false) echo "✗" ;;
-        *) echo "?" ;;
+        true)  symbol="✓" ;;
+        false) symbol="✗" ;;
+        *)     symbol="?" ;;
     esac
+    # Pad with spaces to fixed display width (symbol is 1 display column)
+    padding=$(printf '%*s' "$((width - 1))" '')
+    echo "${symbol}${padding}"
 }
 
 # Check if VM should be included based on filters
@@ -538,10 +542,10 @@ output_table() {
         local image_source
         image_source=$(get_image_source "$image_id" "$image_name" "$volume_id")
 
-        # Format for display
+        # Format for display (with padding for column alignment)
         local bus_status resp_status
-        bus_status=$(format_bool_status "$agent_bus")
-        resp_status=$(format_bool_status "$agent_responding")
+        bus_status=$(format_bool_status "$agent_bus" 9)
+        resp_status=$(format_bool_status "$agent_responding" 10)
 
         # Clear progress bar before printing data row
         (( SHOW_PROGRESS )) && [[ -t 2 ]] && printf "\r%80s\r" "" >&2
@@ -549,10 +553,10 @@ output_table() {
         if (( show_project )); then
             local project_name
             project_name=$(cache_project_name "$project_id")
-            printf "%-36s  %-20s  %-15s  %-17s  %-9s  %-10s  %s\n" \
+            printf "%-36s  %-20s  %-15s  %-17s  %s  %s  %s\n" \
                 "$id" "${name:0:20}" "${project_name:0:15}" "$status" "$bus_status" "$resp_status" "$image_source"
         else
-            printf "%-36s  %-25s  %-17s  %-9s  %-10s  %s\n" \
+            printf "%-36s  %-25s  %-17s  %s  %s  %s\n" \
                 "$id" "${name:0:25}" "$status" "$bus_status" "$resp_status" "$image_source"
         fi
     done < <(echo "$servers_json" | jq -c '.[]')
@@ -622,8 +626,8 @@ output_csv() {
         image_source=$(get_image_source "$image_id" "$image_name" "$volume_id" | sed 's/,/;/g')
 
         local bus_status resp_status
-        bus_status=$(format_bool_status "$agent_bus")
-        resp_status=$(format_bool_status "$agent_responding")
+        bus_status=$(format_bool_status "$agent_bus" 1)
+        resp_status=$(format_bool_status "$agent_responding" 1)
 
         if (( show_project )); then
             local project_name
