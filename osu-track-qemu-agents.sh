@@ -7,7 +7,7 @@
 #
 # Author: Ciro Iriarte <ciro.iriarte+software@gmail.com>
 # Created: 2026-04-23
-# Version: 0.1.0
+# Version: 0.2.0
 #
 # Requirements:
 #   - openstack CLI (python-openstackclient)
@@ -23,7 +23,7 @@
 set -euo pipefail
 
 # --- Configuration ---
-SCRIPT_VERSION="0.1.0"
+SCRIPT_VERSION="0.2.0"
 
 # Operational defaults
 OUTPUT_FORMAT="table"
@@ -32,6 +32,8 @@ DOMAIN_FILTER=""
 ALL_PROJECTS=0
 SHOW_PROGRESS=1
 ISSUES_ONLY=0
+FILTER_RESPONDING=""
+INSECURE=0
 
 # API cache
 AUTH_TOKEN=""
@@ -62,6 +64,7 @@ err()  { echo -e "   ${C_RED}[-]${C_RESET} $*" >&2; }
 
 progress() {
     (( SHOW_PROGRESS )) || return 0
+    [[ -t 2 ]] || return 0  # Only show progress if stderr is a TTY
     local current="$1" total="$2" label="$3"
     local pct=$(( current * 100 / total ))
     local filled=$(( pct / 5 ))
@@ -73,6 +76,7 @@ progress() {
 
 progress_done() {
     (( SHOW_PROGRESS )) || return 0
+    [[ -t 2 ]] || return 0  # Only if stderr is a TTY
     printf "\r%80s\r" "" >&2
 }
 
@@ -111,6 +115,9 @@ Options:
   -f, --format FMT        Output format: table (default), csv, json
   -i, --issues-only       Show only VMs with agent issues (bus not configured
                           or agent not responding)
+      --filter-responding VALUE
+                          Filter by agent responding status: yes, no, undetermined
+      --insecure          Allow insecure SSL connections (skip certificate verification)
   -q, --quiet             Suppress progress indicators
   -h, --help              Show this help message
   -v, --version           Show version
@@ -162,10 +169,21 @@ check_deps() {
 }
 
 check_auth() {
-    if ! openstack token issue -f value -c id &>/dev/null; then
+    local insecure_flag=""
+    (( INSECURE )) && insecure_flag="--insecure"
+    if ! openstack $insecure_flag token issue -f value -c id &>/dev/null; then
         err "OpenStack authentication failed."
         err "Ensure credentials are sourced (e.g.: source ~/openrc.sh)"
         exit 1
+    fi
+}
+
+# Build openstack command with optional --insecure flag
+osc() {
+    if (( INSECURE )); then
+        openstack --insecure "$@"
+    else
+        openstack "$@"
     fi
 }
 
@@ -173,7 +191,7 @@ check_auth() {
 
 ensure_token() {
     if [[ -z "$AUTH_TOKEN" ]]; then
-        AUTH_TOKEN=$(openstack token issue -f value -c id 2>/dev/null) || {
+        AUTH_TOKEN=$(osc token issue -f value -c id 2>/dev/null) || {
             err "Failed to obtain auth token."
             exit 1
         }
@@ -183,7 +201,7 @@ ensure_token() {
 ensure_nova_endpoint() {
     if [[ -z "$NOVA_ENDPOINT" ]]; then
         local catalog_json
-        catalog_json=$(openstack catalog show nova -f json 2>/dev/null) || {
+        catalog_json=$(osc catalog show nova -f json 2>/dev/null) || {
             err "Cannot discover Nova endpoint from service catalog."
             exit 1
         }
@@ -214,7 +232,7 @@ get_image_agent_config() {
     fi
 
     local agent_prop
-    agent_prop=$(openstack image show "$image_id" -f json 2>/dev/null | \
+    agent_prop=$(osc image show "$image_id" -f json 2>/dev/null | \
         jq -r '.properties.hw_qemu_guest_agent // ""') || agent_prop=""
 
     # Normalize to true/false
@@ -232,7 +250,7 @@ get_volume_agent_config() {
     local volume_id="$1"
 
     local vol_json
-    vol_json=$(openstack volume show "$volume_id" -f json 2>/dev/null) || {
+    vol_json=$(osc volume show "$volume_id" -f json 2>/dev/null) || {
         echo ""
         return
     }
@@ -260,13 +278,13 @@ get_image_source() {
             echo "${image_name:0:40}"
         else
             local img_name
-            img_name=$(openstack image show "$image_id" -f value -c name 2>/dev/null) || img_name="$image_id"
+            img_name=$(osc image show "$image_id" -f value -c name 2>/dev/null) || img_name="$image_id"
             echo "${img_name:0:40}"
         fi
     elif [[ -n "$volume_id" ]] && [[ "$volume_id" != "null" ]]; then
         # Get image name from volume metadata
         local vol_img_name
-        vol_img_name=$(openstack volume show "$volume_id" -f json 2>/dev/null | \
+        vol_img_name=$(osc volume show "$volume_id" -f json 2>/dev/null | \
             jq -r '.volume_image_metadata.image_name // ""')
         if [[ -n "$vol_img_name" ]]; then
             echo "vol:${vol_img_name:0:35}"
@@ -339,7 +357,7 @@ get_servers_cli() {
         return
     fi
 
-    openstack server list "${scope_args[@]}" --long \
+    osc server list "${scope_args[@]}" --long \
         -f json \
         -c ID \
         -c Name \
@@ -355,7 +373,7 @@ get_servers_by_domain() {
     local all_servers="[]"
 
     local projects
-    projects=$(openstack project list --domain "$domain" -f value -c ID 2>/dev/null) || {
+    projects=$(osc project list --domain "$domain" -f value -c ID 2>/dev/null) || {
         err "Failed to list projects in domain '$domain'"
         echo "[]"
         return
@@ -372,7 +390,7 @@ get_servers_by_domain() {
         progress "$i" "$project_count" "Querying projects..."
 
         local servers
-        servers=$(openstack server list --project "$project_id" --long \
+        servers=$(osc server list --project "$project_id" --long \
             -f json \
             -c ID \
             -c Name \
@@ -391,13 +409,13 @@ get_servers_by_domain() {
 
 get_server_volumes() {
     local server_id="$1"
-    openstack server show "$server_id" -f json 2>/dev/null | \
+    osc server show "$server_id" -f json 2>/dev/null | \
         jq -r '.volumes_attached[0].id // ""'
 }
 
 get_project_name() {
     local project_id="$1"
-    openstack project show "$project_id" -f value -c name 2>/dev/null || echo "$project_id"
+    osc project show "$project_id" -f value -c name 2>/dev/null || echo "$project_id"
 }
 
 cache_project_name() {
@@ -419,17 +437,35 @@ format_bool_status() {
     esac
 }
 
-# Check if VM should be included based on issues filter
+# Check if VM should be included based on filters
 should_include_vm() {
     local agent_bus="$1"
     local agent_responding="$2"
 
+    # Apply issues-only filter
     if (( ISSUES_ONLY )); then
         # Include if bus not configured OR agent not responding
-        [[ "$agent_bus" != "true" ]] || [[ "$agent_responding" == "false" ]]
-    else
-        return 0
+        if [[ "$agent_bus" == "true" ]] && [[ "$agent_responding" != "false" ]]; then
+            return 1
+        fi
     fi
+
+    # Apply filter-responding filter
+    if [[ -n "$FILTER_RESPONDING" ]]; then
+        case "$FILTER_RESPONDING" in
+            yes)
+                [[ "$agent_responding" == "true" ]] || return 1
+                ;;
+            no)
+                [[ "$agent_responding" == "false" ]] || return 1
+                ;;
+            undetermined)
+                [[ "$agent_responding" != "true" ]] && [[ "$agent_responding" != "false" ]] || return 1
+                ;;
+        esac
+    fi
+
+    return 0
 }
 
 # --- Output formatting --------------------------------------------------------
@@ -475,10 +511,11 @@ output_table() {
         image_name=$(echo "$server" | jq -r '."Image Name" // ""')
         project_id=$(echo "$server" | jq -r '."Project ID" // .tenant_id // "—"')
 
-        # Determine if boot-from-volume (empty image ID)
+        # Determine if boot-from-volume (empty or N/A image ID)
         local volume_id=""
-        if [[ -z "$image_id" ]] || [[ "$image_id" == "null" ]] || [[ "$image_id" == "" ]]; then
+        if [[ -z "$image_id" ]] || [[ "$image_id" == "null" ]] || [[ "$image_id" == "" ]] || [[ "$image_id" == *"booted from volume"* ]]; then
             image_id=""
+            image_name=""
             volume_id=$(get_server_volumes "$id")
         fi
 
@@ -505,6 +542,9 @@ output_table() {
         local bus_status resp_status
         bus_status=$(format_bool_status "$agent_bus")
         resp_status=$(format_bool_status "$agent_responding")
+
+        # Clear progress bar before printing data row
+        (( SHOW_PROGRESS )) && [[ -t 2 ]] && printf "\r%80s\r" "" >&2
 
         if (( show_project )); then
             local project_name
@@ -554,10 +594,11 @@ output_csv() {
         image_name=$(echo "$server" | jq -r '."Image Name" // ""')
         project_id=$(echo "$server" | jq -r '."Project ID" // .tenant_id // "—"')
 
-        # Determine if boot-from-volume (empty image ID)
+        # Determine if boot-from-volume (empty or N/A image ID)
         local volume_id=""
-        if [[ -z "$image_id" ]] || [[ "$image_id" == "null" ]] || [[ "$image_id" == "" ]]; then
+        if [[ -z "$image_id" ]] || [[ "$image_id" == "null" ]] || [[ "$image_id" == "" ]] || [[ "$image_id" == *"booted from volume"* ]]; then
             image_id=""
+            image_name=""
             volume_id=$(get_server_volumes "$id")
         fi
 
@@ -621,10 +662,11 @@ output_json() {
         image_name=$(echo "$server" | jq -r '."Image Name" // ""')
         project_id=$(echo "$server" | jq -r '."Project ID" // .tenant_id // null')
 
-        # Determine if boot-from-volume (empty image ID)
+        # Determine if boot-from-volume (empty or N/A image ID)
         local volume_id=""
-        if [[ -z "$image_id" ]] || [[ "$image_id" == "null" ]] || [[ "$image_id" == "" ]]; then
+        if [[ -z "$image_id" ]] || [[ "$image_id" == "null" ]] || [[ "$image_id" == "" ]] || [[ "$image_id" == *"booted from volume"* ]]; then
             image_id=""
+            image_name=""
             volume_id=$(get_server_volumes "$id")
         fi
 
@@ -688,7 +730,7 @@ output_json() {
 # --- Argument parsing ---------------------------------------------------------
 
 OPTIONS=$(getopt -o hvp:f:ad:qi \
-    --long help,version,project:,domain:,format:,all-projects,issues-only,quiet \
+    --long help,version,project:,domain:,format:,all-projects,issues-only,filter-responding:,insecure,quiet \
     -n "$0" -- "$@")
 if [[ $? -ne 0 ]]; then
     echo "Failed to parse options. Use --help for usage." >&2
@@ -727,6 +769,14 @@ while true; do
             ISSUES_ONLY=1
             shift
             ;;
+        --filter-responding)
+            FILTER_RESPONDING="$2"
+            shift 2
+            ;;
+        --insecure)
+            INSECURE=1
+            shift
+            ;;
         -q|--quiet)
             SHOW_PROGRESS=0
             shift
@@ -754,6 +804,13 @@ case "$OUTPUT_FORMAT" in
     table|csv|json) ;;
     *) err "Invalid format '${OUTPUT_FORMAT}'. Use: table, csv, json"; exit 1 ;;
 esac
+
+if [[ -n "$FILTER_RESPONDING" ]]; then
+    case "$FILTER_RESPONDING" in
+        yes|no|undetermined) ;;
+        *) err "Invalid filter-responding value '${FILTER_RESPONDING}'. Use: yes, no, undetermined"; exit 1 ;;
+    esac
+fi
 
 # Disable progress for non-table output
 if [[ "$OUTPUT_FORMAT" != "table" ]]; then

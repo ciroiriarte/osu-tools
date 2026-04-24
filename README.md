@@ -35,7 +35,7 @@ A collection of Bash wrappers and tools to simplify OpenStack usage via the open
 | `osu-capacity-report.sh` | ![v0.1](https://img.shields.io/badge/version-0.1-orange) | 2026-03-27 | 2026-03-27 |
 | `osu-retype-vdisk.sh` | ![v0.2.0](https://img.shields.io/badge/version-0.2.0-orange) | 2026-03-27 | 2026-03-27 |
 | `osu-track-az-requirement.sh` | ![v0.4.0](https://img.shields.io/badge/version-0.4.0-orange) | 2026-04-23 | 2026-04-23 |
-| `osu-track-qemu-agents.sh` | ![v0.1.0](https://img.shields.io/badge/version-0.1.0-orange) | 2026-04-23 | 2026-04-23 |
+| `osu-track-qemu-agents.sh` | ![v0.2.0](https://img.shields.io/badge/version-0.2.0-orange) | 2026-04-23 | 2026-04-24 |
 
 All scripts support `--version` / `-v` and `--help` / `-h` flags.
 

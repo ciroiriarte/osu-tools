@@ -1,6 +1,6 @@
 .\" Man page for osu-track-qemu-agents.sh
 .\" Written in classic troff/groff format
-.TH OSU-TRACK-QEMU-AGENTS 1 "2026-04-23" "osu-track-qemu-agents 0.1.0" "User Commands"
+.TH OSU-TRACK-QEMU-AGENTS 1 "2026-04-24" "osu-track-qemu-agents 0.2.0" "User Commands"
 .SH NAME
 osu-track-qemu-agents \- report OpenStack VMs with QEMU guest agent status
 .SH SYNOPSIS
@@ -77,6 +77,12 @@ for cross-domain project lookup.
 .BR \-i ", " \-\-issues\-only
 Show only VMs with agent issues (bus not configured or agent not responding).
 Useful for identifying VMs that need attention.
+.TP
+.BR \-\-filter\-responding " " \fIVALUE\fR
+Filter VMs by agent responding status. Valid values:
+.BR yes " (agent communicating), "
+.BR no " (agent not responding), "
+.BR undetermined " (couldn't determine)."
 .SS Output Options
 .TP
 .BR \-f ", " \-\-format " " \fIFMT\fR
