@@ -248,3 +248,189 @@ _osu_capacity_report() {
 
 complete -F _osu_capacity_report osu-capacity-report.sh
 complete -F _osu_capacity_report osu-capacity-report
+
+# --- osu-track-az-requirement.sh ---------------------------------------------
+
+_osu_track_az_requirement() {
+    local cur prev
+    _osu_comp_init
+
+    case "$prev" in
+        -s|--server)
+            if command -v openstack &>/dev/null; then
+                local servers
+                servers=$(openstack server list -f value -c Name 2>/dev/null)
+                COMPREPLY=( $(compgen -W "$servers" -- "$cur") )
+            fi
+            return
+            ;;
+        -p|--project)
+            if command -v openstack &>/dev/null; then
+                local projects
+                projects=$(openstack project list -f value -c Name 2>/dev/null)
+                COMPREPLY=( $(compgen -W "$projects" -- "$cur") )
+            fi
+            return
+            ;;
+        -d|--domain)
+            if command -v openstack &>/dev/null; then
+                local domains
+                domains=$(openstack domain list -f value -c Name 2>/dev/null)
+                COMPREPLY=( $(compgen -W "$domains" -- "$cur") )
+            fi
+            return
+            ;;
+        -f|--format)
+            COMPREPLY=( $(compgen -W "table csv json" -- "$cur") )
+            return
+            ;;
+        --mysql-unit)
+            if command -v juju &>/dev/null; then
+                local units
+                units=$(juju status mysql-innodb-cluster --format json 2>/dev/null | \
+                    jq -r '.applications["mysql-innodb-cluster"].units | keys[]' 2>/dev/null)
+                COMPREPLY=( $(compgen -W "$units" -- "$cur") )
+            fi
+            return
+            ;;
+    esac
+
+    if [[ "$cur" == --* ]]; then
+        COMPREPLY=( $(compgen -W "
+            --help --version --server --all-projects
+            --domain --project --format --mismatch-only
+            --mysql-unit --quiet
+        " -- "$cur") )
+    elif [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "
+            -h -v -s -a -d -p -f -m -q
+            --help --version --server --all-projects
+            --domain --project --format --mismatch-only
+            --mysql-unit --quiet
+        " -- "$cur") )
+    fi
+}
+
+complete -F _osu_track_az_requirement osu-track-az-requirement.sh
+complete -F _osu_track_az_requirement osu-track-az-requirement
+
+# --- osu-track-qemu-agents.sh ------------------------------------------------
+
+_osu_track_qemu_agents() {
+    local cur prev
+    _osu_comp_init
+
+    case "$prev" in
+        -p|--project)
+            if command -v openstack &>/dev/null; then
+                local projects
+                projects=$(openstack project list -f value -c Name 2>/dev/null)
+                COMPREPLY=( $(compgen -W "$projects" -- "$cur") )
+            fi
+            return
+            ;;
+        -d|--domain)
+            if command -v openstack &>/dev/null; then
+                local domains
+                domains=$(openstack domain list -f value -c Name 2>/dev/null)
+                COMPREPLY=( $(compgen -W "$domains" -- "$cur") )
+            fi
+            return
+            ;;
+        -f|--format)
+            COMPREPLY=( $(compgen -W "table csv json" -- "$cur") )
+            return
+            ;;
+        --filter-responding)
+            COMPREPLY=( $(compgen -W "yes no undetermined" -- "$cur") )
+            return
+            ;;
+    esac
+
+    if [[ "$cur" == --* ]]; then
+        COMPREPLY=( $(compgen -W "
+            --help --version --all-projects --domain --project
+            --format --issues-only --filter-responding
+            --insecure --quiet
+        " -- "$cur") )
+    elif [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "
+            -h -v -a -d -p -f -i -q
+            --help --version --all-projects --domain --project
+            --format --issues-only --filter-responding
+            --insecure --quiet
+        " -- "$cur") )
+    fi
+}
+
+complete -F _osu_track_qemu_agents osu-track-qemu-agents.sh
+complete -F _osu_track_qemu_agents osu-track-qemu-agents
+
+# --- osu-unpin-vm-from-az.sh -------------------------------------------------
+
+_osu_unpin_vm_from_az() {
+    local cur prev
+    _osu_comp_init
+
+    case "$prev" in
+        -t|--target-host)
+            if command -v openstack &>/dev/null; then
+                local hosts
+                hosts=$(openstack compute service list --service nova-compute -f value -c Host 2>/dev/null)
+                COMPREPLY=( $(compgen -W "$hosts" -- "$cur") )
+            fi
+            return
+            ;;
+        --venv)
+            # Complete with directories
+            COMPREPLY=( $(compgen -d -- "$cur") )
+            return
+            ;;
+    esac
+
+    if [[ "$cur" == --* ]]; then
+        COMPREPLY=( $(compgen -W "
+            --help --version --target-host --venv
+            --dry-run --force --insecure --quiet
+        " -- "$cur") )
+    elif [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "
+            -h -v -t -f -q
+            --help --version --target-host --venv
+            --dry-run --force --insecure --quiet
+        " -- "$cur") )
+    else
+        # Positional: server names
+        if command -v openstack &>/dev/null; then
+            local servers
+            servers=$(openstack server list -f value -c Name 2>/dev/null)
+            COMPREPLY=( $(compgen -W "$servers" -- "$cur") )
+        fi
+    fi
+}
+
+complete -F _osu_unpin_vm_from_az osu-unpin-vm-from-az.sh
+complete -F _osu_unpin_vm_from_az osu-unpin-vm-from-az
+
+# --- osu-implement-multiattach-volumetypes.sh --------------------------------
+
+_osu_implement_multiattach_volumetypes() {
+    local cur prev
+    _osu_comp_init
+
+    if [[ "$cur" == --* ]]; then
+        COMPREPLY=( $(compgen -W "
+            --help --version --list --dry-run
+            --force --insecure --quiet
+        " -- "$cur") )
+    elif [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "
+            -h -v -l -n -f -q
+            --help --version --list --dry-run
+            --force --insecure --quiet
+        " -- "$cur") )
+    fi
+}
+
+complete -F _osu_implement_multiattach_volumetypes osu-implement-multiattach-volumetypes.sh
+complete -F _osu_implement_multiattach_volumetypes osu-implement-multiattach-volumetypes
