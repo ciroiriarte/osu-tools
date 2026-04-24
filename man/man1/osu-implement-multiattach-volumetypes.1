@@ -1,0 +1,161 @@
+.\" Man page for osu-implement-multiattach-volumetypes.sh
+.\" Written in classic troff/groff format
+.TH OSU-IMPLEMENT-MULTIATTACH-VOLUMETYPES 1 "2026-04-24" "osu-implement-multiattach-volumetypes 0.1.0" "User Commands"
+.SH NAME
+osu-implement-multiattach-volumetypes \- create multi-attach Cinder volume type variants
+.SH SYNOPSIS
+.B osu-implement-multiattach-volumetypes.sh
+.RB [ \-h | \-\-help ]
+.RB [ \-v | \-\-version ]
+.PP
+.B osu-implement-multiattach-volumetypes.sh
+.RB [ \-l | \-\-list ]
+.RB [ \-\-insecure ]
+.PP
+.B osu-implement-multiattach-volumetypes.sh
+.RB [ \-n | \-\-dry\-run ]
+.RB [ \-f | \-\-force ]
+.RB [ \-\-insecure ]
+.RB [ \-q | \-\-quiet ]
+.SH DESCRIPTION
+.B osu-implement-multiattach-volumetypes.sh
+creates multi-attach enabled volume type variants for existing Cinder volume
+types backed by Ceph. Multi-attach allows a single volume to be attached to
+multiple VMs simultaneously, required for clustered filesystems (GFS2, OCFS2)
+and shared storage workloads.
+.PP
+For each volume type with a
+.B volume_backend_name
+property, the script creates a variant named
+.I <original-type>-multiattach
+with the same backend and the
+.B multiattach
+extra-spec enabled.
+.SS Multi-Attach Property
+The multi-attach capability is controlled by the extra-spec:
+.IP
+.B multiattach="<is> True"
+.PP
+Volumes created with a multi-attach enabled type can be attached to multiple
+VMs simultaneously. Volumes created before the type was updated are not
+affected.
+.SH OPTIONS
+.SS Mode Selection
+.TP
+.BR \-l ", " \-\-list
+List volume types grouped by backend, showing regular and multi-attach
+variants side by side with status indicators.
+.TP
+(default)
+Create multi-attach variants for all eligible volume types.
+.SS Execution Options
+.TP
+.BR \-n ", " \-\-dry\-run
+Show what would be done without making changes.
+.TP
+.BR \-f ", " \-\-force
+Skip confirmation prompt.
+.TP
+.B \-\-insecure
+Allow insecure SSL connections (skip certificate verification).
+.SS Other Options
+.TP
+.BR \-q ", " \-\-quiet
+Suppress progress output.
+.TP
+.BR \-v ", " \-\-version
+Display version information and exit.
+.TP
+.BR \-h ", " \-\-help
+Display usage information and exit.
+.SH OUTPUT (--list)
+.TP
+.B Backend
+Cinder backend name (maps to Ceph pool).
+.TP
+.B Regular Type
+Standard volume type name.
+.TP
+.B Multi-Attach Type
+Multi-attach enabled variant, or \(em if not created.
+.TP
+.B Status
+Status indicator: \fB\[u2713]\fR (both exist), \fB\[u26a0]\fR (missing multiattach variant).
+.SH EXIT STATUS
+.TP
+.B 0
+Successful execution.
+.TP
+.B 1
+Error occurred (missing dependencies, authentication failure, creation failed).
+.SH EXAMPLES
+List current volume types by backend:
+.PP
+.RS
+.nf
+$ osu-implement-multiattach-volumetypes.sh --list
+.fi
+.RE
+.PP
+Dry run to see what would be created:
+.PP
+.RS
+.nf
+$ osu-implement-multiattach-volumetypes.sh --dry-run
+.fi
+.RE
+.PP
+Create multi-attach variants (with confirmation):
+.PP
+.RS
+.nf
+$ osu-implement-multiattach-volumetypes.sh
+.fi
+.RE
+.PP
+Create without confirmation:
+.PP
+.RS
+.nf
+$ osu-implement-multiattach-volumetypes.sh --force
+.fi
+.RE
+.SH ENVIRONMENT
+The script requires:
+.IP \(bu 2
+Valid OpenStack credentials sourced (e.g.,
+.BR "source ~/openrc.sh" ).
+.IP \(bu 2
+OpenStack admin privileges with volume-type management permissions.
+.SH NOTES
+.SS Use Cases for Multi-Attach
+.IP \(bu 2
+.B Clustered filesystems:
+GFS2, OCFS2, or other cluster-aware filesystems that coordinate access.
+.IP \(bu 2
+.B Shared storage:
+Oracle RAC, database clusters requiring shared disk access.
+.IP \(bu 2
+.B High availability:
+Active-passive clusters where the secondary node needs read access.
+.PP
+.B Warning:
+Do not use multi-attach with non-cluster-aware filesystems (ext4, xfs).
+Concurrent writes without coordination will cause data corruption.
+.SS Volume Type Naming
+The script uses the suffix
+.B -multiattach
+for variant names. For example:
+.IP
+.B cinder-ceph
+\(->
+.B cinder-ceph-multiattach
+.SS Backend Preservation
+Multi-attach variants use the same
+.B volume_backend_name
+as the original type, so volumes are stored in the same Ceph pool.
+.SH AUTHORS
+Ciro Iriarte <ciro.iriarte+software@gmail.com>
+.SH SEE ALSO
+.BR openstack (1),
+.BR cinder (1)

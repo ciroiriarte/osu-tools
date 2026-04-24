@@ -20,6 +20,7 @@ A collection of Bash wrappers and tools to simplify OpenStack usage via the open
   - [osu-track-az-requirement.sh](#-osu-track-az-requirementsh)
   - [osu-track-qemu-agents.sh](#-osu-track-qemu-agentssh)
   - [osu-unpin-vm-from-az.sh](#-osu-unpin-vm-from-azsh)
+  - [osu-implement-multiattach-volumetypes.sh](#-osu-implement-multiattach-volumetypessh)
 - [Documentation](#-documentation)
 - [Contributing](#-contributing)
 - [License](#-license)
@@ -38,6 +39,7 @@ A collection of Bash wrappers and tools to simplify OpenStack usage via the open
 | `osu-track-az-requirement.sh` | ![v0.4.1](https://img.shields.io/badge/version-0.4.1-orange) | 2026-04-23 | 2026-04-24 |
 | `osu-track-qemu-agents.sh` | ![v0.2.1](https://img.shields.io/badge/version-0.2.1-orange) | 2026-04-23 | 2026-04-24 |
 | `osu-unpin-vm-from-az.sh` | ![v0.1.0](https://img.shields.io/badge/version-0.1.0-orange) | 2026-04-24 | 2026-04-24 |
+| `osu-implement-multiattach-volumetypes.sh` | ![v0.1.0](https://img.shields.io/badge/version-0.1.0-orange) | 2026-04-24 | 2026-04-24 |
 
 All scripts support `--version` / `-v` and `--help` / `-h` flags.
 
@@ -699,6 +701,73 @@ This is a one-time setup that happens transparently.
 
 # Display help
 ./osu-unpin-vm-from-az.sh --help
+```
+
+---
+
+### 🔗 `osu-implement-multiattach-volumetypes.sh`
+
+Creates multi-attach enabled volume type variants for existing Cinder volume types backed by Ceph. Multi-attach allows a single volume to be attached to multiple VMs simultaneously, required for clustered filesystems (GFS2, OCFS2) and shared storage workloads.
+
+- **Author:** Ciro Iriarte
+- **Created:** 2026-04-24
+- **Updated:** 2026-04-24
+
+#### ⚙️ Requirements
+
+- Required tools:
+  - `openstack` CLI (python-openstackclient)
+  - `jq`
+- A sourced OpenStack credentials file (e.g., `openrc.sh`)
+
+#### 🔐 Permissions
+
+| Scope | Requirement |
+|---|---|
+| Volume type management | OpenStack admin |
+
+#### 📋 How It Works
+
+For each volume type with a `volume_backend_name` property:
+1. Creates a variant named `<original-type>-multiattach`
+2. Sets the same `volume_backend_name` (same Ceph pool)
+3. Enables `multiattach="<is> True"` extra-spec
+
+#### 📊 List Output
+
+| Column | Description |
+|---|---|
+| Backend | Cinder backend name (maps to Ceph pool) |
+| Regular Type | Standard volume type name |
+| Multi-Attach Type | Multi-attach variant (or — if not created) |
+| Status | ✓ (both exist), ⚠ (missing multiattach) |
+
+#### ⚠️ Important Notes
+
+- **Use only with cluster-aware filesystems** (GFS2, OCFS2, Oracle RAC)
+- **Do NOT use** with ext4, xfs, or other non-cluster filesystems — concurrent writes cause data corruption
+- Existing volumes are not affected — only new volumes use the multiattach capability
+
+#### 🚀 Usage
+
+```bash
+# List current volume types by backend
+./osu-implement-multiattach-volumetypes.sh --list
+
+# Dry run to see what would be created
+./osu-implement-multiattach-volumetypes.sh --dry-run
+
+# Create multi-attach variants (with confirmation)
+./osu-implement-multiattach-volumetypes.sh
+
+# Create without confirmation
+./osu-implement-multiattach-volumetypes.sh --force
+
+# Display version
+./osu-implement-multiattach-volumetypes.sh --version
+
+# Display help
+./osu-implement-multiattach-volumetypes.sh --help
 ```
 
 ---
